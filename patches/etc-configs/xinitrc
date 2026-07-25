@@ -1,4 +1,5 @@
 #!/bin/sh
+xsetroot -solid "#3465a4" &
 dbus-launch --exit-with-x11 sh -c '
   xfsettingsd &
   sleep 1
