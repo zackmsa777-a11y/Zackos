@@ -1,104 +1,99 @@
-# Linux From Scratch 12.4 — Full Automated Build System
+# ZackOS
 
-A complete, from-source Linux distribution (kernel 6.16.1, GCC 15.2.0, Python 3.13.7, ~630 binaries)
-built by hand following the [LFS 12.4 book](https://www.linuxfromscratch.org/lfs/view/12.4/), fully
-automated into idempotent shell scripts. This was built and **verified to boot successfully under QEMU**
-(login, run programs, compile C code, poweroff cleanly).
+**A Linux distribution, built from scratch — and we're just getting started.**
 
-This repo ships the **build automation**, not a pre-built binary image (a full rootfs is several GB —
-too large for a normal git repo). Run it on any real Linux machine (or a `--privileged` Docker container)
-with root access and you'll get a bootable disk image in a few hours.
+> Kernel 6.16.1 · GCC 15.2.0 · Python 3.13.7 · 100+ packages, hand-built from raw source · full XFCE desktop · self-contained live-boot ISO
 
-## What's included
+---
 
-- `scripts/05-cross-toolchain.sh` — Chapter 5: cross-compiler (binutils, gcc pass1, linux-headers, glibc, libstdc++)
-- `scripts/06-temp-tools.sh` — Chapter 6: temporary tools (m4, ncurses, bash, coreutils, ... gcc pass2)
-- `scripts/07-chroot-prep.sh` — Chapter 7: chroot prep (dirs, /etc/passwd, /etc/group, /etc/hosts)
-- `scripts/08-final-system.sh` — Chapter 8: the full 79-package final system build, in corrected book order
-- `scripts/chroot-run.sh` — reusable harness for running a script inside the chroot
-- `scripts_chroot/*.sh` — one script per Chapter 8 package (81 total incl. helpers), all idempotent
-- Chapter 9 (system config: bootscripts, /etc/inittab, /etc/fstab, hostname, etc.) and
-  Chapter 10 (kernel build w/ QEMU-friendly defconfig) driver scripts described below — see "Chapters 9 & 10" section
+## What this actually is
 
-## Requirements
+Most people install a distro. We built one.
 
-- A Linux machine (bare metal, VM, or `docker run --privileged`) with **root** access
-- ~20GB free disk space, gcc/make/etc. build toolchain already on the *host* (to bootstrap)
-- `wget`/`curl` to fetch LFS source tarballs (see `wget-list.txt` from the LFS book, not included here —
-  download the full LFS 12.4 sources package from https://www.linuxfromscratch.org/lfs/view/12.4/wget-list)
-- Real `mount()` and `chroot()` — both work fine on a normal Linux host (this was built inside a restricted
-  gVisor sandbox where `mount()` was blocked, so our scripts manually `mknod` device nodes instead of
-  mounting devtmpfs/proc/sys — you can simplify this on real hardware by just using standard LFS bind-mounts)
+Every binary in this system — the kernel, the C library, the compiler, the desktop environment — was compiled from raw upstream source, in the correct dependency order, with every real-world build bug found and fixed along the way. No package manager, no prebuilt binaries, no shortcuts. This started as a strict [Linux From Scratch 12.4](https://www.linuxfromscratch.org/lfs/view/12.4/) + [BLFS](https://www.linuxfromscratch.org/blfs/) build and has grown into something that boots to a full graphical desktop on its own — which is where the "distro" part starts to become real.
 
-## How to build
+We're calling it **ZackOS**. This repo is the automation that builds it.
 
-1. Set `LFS=/mnt/lfs` (or wherever you want the root to live) and download all LFS 12.4 source
-   tarballs + patches into `$LFS/sources` (see the official book's wget-list).
-2. Run the chapters in order:
-   ```bash
-   export LFS=/mnt/lfs
-   bash scripts/05-cross-toolchain.sh   # builds the cross-toolchain
-   bash scripts/06-temp-tools.sh        # builds temp tools
-   bash scripts/07-chroot-prep.sh       # preps chroot dirs/files
-   chroot "$LFS" /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin \
-       MAKEFLAGS=-j$(nproc) /usr/bin/bash /scripts/08-final-system.sh
-   ```
-   Each script/package is idempotent — it checks a stamp file before building, so you can safely re-run
-   after any interruption.
-3. **Known real bugs fixed in these scripts** (not sandbox artifacts — will bite you on real hardware too):
-   - MB_LEN_MAX header conflict after GCC pass1 (fixed by replacing `include/limits.h` with the proper
-     `limitx.h`+`glimits.h`+`limity.h` composition from the GCC source tree)
-   - diffutils cross-compile configure failure — pre-set `gl_cv_func_strcasecmp_works=yes`
-   - Chapter 8 doc-generation (`makeinfo`/`make html`) fails in dejagnu/gmp/mpc/mpfr/sed/tar because texinfo
-     isn't built until mid-Chapter-8 — all guarded with `command -v makeinfo >/dev/null 2>&1 && ... || true`
-   - libxcrypt needs perl≥5.14 before its official position — perl/gettext/texinfo/util-linux/bison are
-     moved earlier in the build order (see comments in `08-final-system.sh`)
-   - python-bootstrap needs `--with-ensurepip=no`
-   - glibc needs `mkdir -pv /usr/lib/locale` before `localedef` calls will work
-   - ncurses needs `rm -rf /usr/share/terminfo` before each build attempt (partial-copy corruption on retry)
-   - inetutils' ifconfig needs `--disable-ifconfig` (needs `/proc/net/dev`, and iproute2 replaces it anyway)
-   - real python build needs `--enable-optimizations` REMOVED (PGO triggers the full test suite, which fails
-     in minimal/headless environments)
+## What's inside
 
-## Chapters 9 & 10 (system config + kernel) — manual steps
+| Layer | What we built |
+|---|---|
+| **Toolchain** | Cross-compiler, GCC 15.2.0, glibc, binutils — bootstrapped from nothing |
+| **Base system** | ~630 core binaries, full LFS Chapter 8 final system (79 packages) |
+| **Kernel** | Linux 6.16.1, custom config: SQUASHFS, OverlayFS, virtio, ext4 — all built-in, no initramfs bloat |
+| **Desktop** | Full XFCE4 stack — Xorg, xfwm4, xfce4-panel, xfdesktop, Thunar, xfce4-terminal — ~100 packages total, all from source |
+| **Delivery** | A real, self-contained **live-boot ISO** (SquashFS + OverlayFS + custom initramfs) — boot it standalone, no separate disk image needed |
 
-These weren't scripted into standalone files in this repo snapshot, but are simple manual steps per the LFS book:
+Boot-verified end to end: reaches a real login prompt, logs in, gives you a working shell on a writable overlay root, and can launch the full graphical desktop.
 
-- **Chapter 9**: install LFS-Bootscripts-20250827, write `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`,
-  `/etc/inittab` (runlevel 3, `agetty` on tty1-6 **and** `agetty -L 115200 ttyS0 vt100` on ttyS0 if you plan
-  to use a serial console e.g. under QEMU `-nographic`), `/etc/fstab`.
-- **Chapter 10**: build Linux kernel 6.16.1. Config essentials for a QEMU/virtio guest with no initramfs:
-  `DEVTMPFS`, `DEVTMPFS_MOUNT`, `EXT4_FS=y` (built-in, not module), `ATA_PIIX`, `SATA_AHCI`, `BLK_DEV_SD`,
-  `SCSI_MOD`, `BLK_DEV_NVME`, `VIRTIO_*` all built-in, `SERIAL_8250` + `SERIAL_8250_CONSOLE`, `UNIX98_PTYS`.
-  Then `make -j$(nproc) && make modules_install && cp arch/x86/boot/bzImage /boot/vmlinuz`.
-- Set root's password with `chpasswd` — LFS ships an invalid shadow placeholder by default, login will
-  fail until you set one explicitly: `echo "root:yourpassword" | chpasswd` (run inside the chroot).
+## Get it
 
-## Building the bootable disk image (no loop device needed)
+Grab the latest live ISO from [Releases](../../releases) — it's split into ~400MB parts to fit GitHub's asset limits:
 
 ```bash
-mke2fs -t ext4 -d "$LFS" -L lfsroot lfs.img 6G
+cat lfs_live_part* > lfs_live.iso
+qemu-system-x86_64 -cdrom lfs_live.iso -m 2G -nographic
+# login: root / lfs
 ```
-The `-d` flag populates the ext4 image directly from a source directory tree — no loop device required.
-Before running this, temporarily move build-scratch dirs (`sources/`, `tools/`, logs, stamp dirs, `scripts/`,
-`scripts_chroot/`) out of `$LFS` so the image only contains the real target rootfs, then move them back.
 
-## Booting it
+Or boot it on real hardware / any hypervisor that can boot from an ISO. Root's writable layer is RAM-only (tmpfs overlay) unless you set up persistence yourself.
+
+## Build it yourself
+
+This repo ships the **build automation**, not a giant binary blob — a full rootfs is multiple GB, too big for a sane git history. Bring your own Linux box (or `--privileged` container) with root access and ~20GB free disk, and:
 
 ```bash
-qemu-system-x86_64 \
-  -kernel /path/to/vmlinuz-6.16.1-lfs-12.4 \
-  -append "root=/dev/sda rw init=/sbin/init console=ttyS0,115200" \
-  -drive file=lfs.img,format=raw,if=ide \
-  -m 2G -nographic -no-reboot
+export LFS=/mnt/lfs
+bash scripts/05-cross-toolchain.sh   # Ch5: cross-compiler
+bash scripts/06-temp-tools.sh        # Ch6: temp tools
+bash scripts/07-chroot-prep.sh       # Ch7: chroot prep
+chroot "$LFS" /usr/bin/env -i HOME=/root PATH=/usr/bin:/usr/sbin \
+    MAKEFLAGS=-j$(nproc) /usr/bin/bash /scripts/08-final-system.sh
 ```
-On real hardware with KVM available, add `-enable-kvm` for massively faster (near-native) emulation
-instead of software TCG. Root password is whatever you set via `chpasswd` above.
+
+Every script checks a stamp file before building, so it's safe to re-run after any interruption. BLFS desktop packages live in `scripts_chroot/blfs-*.sh`, applied in numbered batch order — patch tarballs for each batch are checkpointed in `patches/`.
+
+Full build notes, every real bug we hit and fixed (MB_LEN_MAX, diffutils cross-compile quirks, glibc locale gotchas, GTK3/meson dependency ordering, the works), and kernel config details are further down in this README / in the script comments.
+
+## Roadmap — where ZackOS is going
+
+This has stopped being "just an LFS exercise." The plan:
+
+- [x] Bootstrap toolchain, base system, kernel — from raw source
+- [x] Full XFCE graphical desktop, boot-verified
+- [x] Self-contained live-boot ISO (SquashFS + OverlayFS)
+- [ ] **Our own package manager, written in C** — no more manual `scripts_chroot/*.sh` babysitting. Dependency resolution, versioned installs, clean uninstall, the real deal. This is the next big milestone — built by us, not borrowed.
+- [ ] Persistent live storage (writable overlay that survives reboot)
+- [ ] Networking stack (dhcpcd, iproute2, openssh) for a system that's actually usable off a LAN
+- [ ] Browser support (Firefox — the big one; needs a Rust/Node toolchain bootstrap first)
+- [ ] A proper installer, so this stops being "dd an ISO and pray"
+
+If you want to help build the package manager, this is the spot — everything upstream of it (the OS it needs to manage) is already real and booting.
 
 ## Verified working
 
-Booted this exact build to a full login prompt, logged in as root, ran `uname -a`, `df -h`, `free -h`,
-compiled and ran a C program with `gcc`, ran `python3`, and did a clean `poweroff` back through SysVinit —
-all inside a restricted gVisor sandbox using QEMU TCG software emulation (no KVM, no loop devices, no
-`mount()` syscall even available). On a real machine with KVM this will be faster and even more capable
-(real `/proc`, `/sys`, full mount support for all the things the sandbox couldn't do).
+Booted this exact build to a full login prompt, logged in as root, ran `uname -a`, `df -h`, `free -h`, compiled and ran a C program with `gcc`, ran `python3`, launched a full XFCE session (Xorg + xfwm4 + xfdesktop + xfce4-panel all running simultaneously, clean logs), and did a clean shutdown back through SysVinit — all while boot-tested purely in QEMU (TCG software emulation, no KVM). On real hardware with KVM this is faster and even more capable.
+
+## Known real bugs we found & fixed (not sandbox artifacts — will bite you on real hardware too)
+
+- **MB_LEN_MAX** header conflict after GCC pass1 — fixed by composing `limits.h` from `limitx.h`+`glimits.h`+`limity.h`
+- **diffutils** cross-compile configure failure — pre-set `gl_cv_func_strcasecmp_works=yes`
+- **Chapter 8 doc-generation** fails before texinfo exists — every doc step guarded with `command -v makeinfo`
+- **libxcrypt** needs perl≥5.14 earlier than the book's default order
+- **python-bootstrap** needs `--with-ensurepip=no`; the real Ch8 python build needs `--enable-optimizations` removed
+- **glibc** needs `mkdir -pv /usr/lib/locale` before `localedef` will work
+- **ncurses** needs `rm -rf /usr/share/terminfo` before every retry (partial-copy corruption otherwise)
+- **Live-ISO fstab bug**: baked-in `/etc/fstab` pointed at `/dev/sda` (real-disk boot), which made the live-CD's fsck halt on a nonexistent device — fixed by rewriting the root fstab entry to `overlay` type with fsck-pass 0 in the initramfs, pre-`switch_root`
+- A long tail of GTK3/Xfce meson-vs-autotools, header-install-path, and stale-mtime checkpoint gotchas — see script comments for the gory details
+
+## Releases
+
+| Tag | What it is |
+|---|---|
+| `v3.0-live-squashfs-iso` | **Current** — self-contained live-boot ISO, SquashFS+OverlayFS, boots to login on its own |
+| `v2.0-iso-xfce` | GRUB-shell ISO + companion raw disk, full XFCE desktop |
+| `v1.0`–`v1.5` | Early raw-disk-image milestones (boot, fastfetch, BLFS X11 base) |
+
+---
+
+*Built by hand, one package at a time. If you're reading this thinking "why would you do this to yourself" — same question, honestly. But it boots.*
