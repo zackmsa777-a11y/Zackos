@@ -1,4 +1,4 @@
-# ZackOS
+# Sageos
 
 **A Linux distribution, built from scratch — and we're just getting started.**
 
