@@ -1,4 +1,4 @@
-# ZackOS
+# Sageos
 
 **A Linux distribution, built from scratch — and we're just getting started.**
 
@@ -55,7 +55,7 @@ Every script checks a stamp file before building, so it's safe to re-run after a
 
 Full build notes, every real bug we hit and fixed (MB_LEN_MAX, diffutils cross-compile quirks, glibc locale gotchas, GTK3/meson dependency ordering, the works), and kernel config details are further down in this README / in the script comments.
 
-## Roadmap — where ZackOS is going
+## Roadmap — where Sageos is going
 
 This has stopped being "just an LFS exercise." The plan:
 
