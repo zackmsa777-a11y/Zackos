@@ -16,27 +16,33 @@ rm -rf git-2.47.1
 tar xf git-2.47.1.tar.xz
 cd git-2.47.1
 
+# GCC 15 defaults to -std=gnu23, which makes C23 keywords/macros
+# (unreachable(), thread_local) reserved -- git-2.47.1's own source
+# uses both as plain identifiers (reflog.c's unreachable() function,
+# builtin/index-pack.c's thread_local struct members), causing hard
+# compile errors under the new default. Force the older standard so
+# those names stay available as ordinary identifiers.
+export CC="gcc -std=gnu17"
+export CFLAGS="-std=gnu17 -O2"
+
 # NO_CURL: no libcurl/curl headers on this system yet -> disables git
 #          clone/fetch over http(s); local (file://) and future ssh://
 #          transports still work fine.
 # NO_TCLTK: no tcl/tk built -> skips git-gui/gitk.
 # NO_GETTEXT: keep it simple/English-only, avoids gettext runtime dep checks.
 # NO_PYTHON: no python-dependent contrib scripts needed.
-# USE_LIBPCRE2: leave off, pcre2 status unverified on this box.
 make configure
 ./configure --prefix=/usr \
+    CC="gcc -std=gnu17" \
+    CFLAGS="-std=gnu17 -O2" \
     NO_CURL=1 \
     NO_TCLTK=1 \
     NO_GETTEXT=1 \
     NO_PYTHON=1
 
-if command -v makeinfo >/dev/null 2>&1; then
-    make || true
-else
-    make NO_GETTEXT=1
-fi
+make CC="gcc -std=gnu17" CFLAGS="-std=gnu17 -O2" NO_CURL=1 NO_TCLTK=1 NO_GETTEXT=1 NO_PYTHON=1
 
-make NO_CURL=1 NO_TCLTK=1 NO_GETTEXT=1 NO_PYTHON=1 install
+make CC="gcc -std=gnu17" CFLAGS="-std=gnu17 -O2" NO_CURL=1 NO_TCLTK=1 NO_GETTEXT=1 NO_PYTHON=1 install
 
 echo "=== verifying git ==="
 git --version
