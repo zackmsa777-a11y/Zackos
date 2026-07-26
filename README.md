@@ -12,7 +12,7 @@ Most people install a distro. We built one.
 
 Every binary in this system — the kernel, the C library, the compiler, the desktop environment — was compiled from raw upstream source, in the correct dependency order, with every real-world build bug found and fixed along the way. No package manager, no prebuilt binaries, no shortcuts. This started as a strict [Linux From Scratch 12.4](https://www.linuxfromscratch.org/lfs/view/12.4/) + [BLFS](https://www.linuxfromscratch.org/blfs/) build and has grown into something that boots to a full graphical desktop on its own — which is where the "distro" part starts to become real.
 
-We're calling it **ZackOS**. This repo is the automation that builds it.
+We're calling it **sageos**. This repo is the automation that builds it.
 
 ## What's inside
 
