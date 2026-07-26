@@ -1,16 +1,10 @@
+#!/bin/bash
 set -e
-cd /sources
-rm -rf libxkbcommon-1.7.0
-tar xf libxkbcommon-1.7.0.tar.xz
-cd libxkbcommon-1.7.0
-mkdir -p build
-meson setup build \
-  --prefix=/usr \
-  --buildtype=release \
-  -Denable-x11=true \
-  -Denable-docs=false \
-  -Denable-wayland=false
-ninja -C build
+cd /sources/libxkbcommon-1.7.0
+rm -rf build
+meson setup build --prefix=/usr -D enable-x11=true -D enable-docs=false -D enable-wayland=false
+ninja -C build -j17
 ninja -C build install
-cd /sources
-rm -rf libxkbcommon-1.7.0
+echo "=== libxkbcommon build done ==="
+ldd /usr/lib/libxkbcommon.so.0 || true
+ldd /usr/lib/libxkbcommon-x11.so.0 || true
