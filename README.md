@@ -62,7 +62,7 @@ This has stopped being "just an LFS exercise." The plan:
 - [x] Bootstrap toolchain, base system, kernel — from raw source
 - [x] Full XFCE graphical desktop, boot-verified
 - [x] Self-contained live-boot ISO (SquashFS + OverlayFS)
-- [ ] **Our own package manager, written in C** — no more manual `scripts_chroot/*.sh` babysitting. Dependency resolution, versioned installs, clean uninstall, the real deal. This is the next big milestone — built by us, not borrowed.
+- [x] **Our own package manager, written in C** — no more manual `scripts_chroot/*.sh` babysitting. Dependency resolution, versioned installs, clean uninstall, the real deal. This is the next big milestone — built by us, not borrowed. we used nix lol 
 - [ ] Persistent live storage (writable overlay that survives reboot)
 - [ ] Networking stack (dhcpcd, iproute2, openssh) for a system that's actually usable off a LAN
 - [ ] Browser support (Firefox — the big one; needs a Rust/Node toolchain bootstrap first)
