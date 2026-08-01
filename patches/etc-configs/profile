@@ -1,5 +1,12 @@
 export LANG=C.UTF-8
 
+# Base PATH: login.defs (ENV_SUPATH/ENV_PATH) only sets /usr/sbin:/usr/bin or
+# /usr/bin before this runs - it never includes /usr/local/{s,}bin, where
+# ZackOS's Nix-provided tool symlinks (grub-install, grub-mkconfig, dhcpcd,
+# etc.) live. Set it here, before sourcing profile.d, so profile.d scripts
+# (e.g. nix.sh) that prepend to $PATH build on top of the right base.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:${PATH}"
+
 for script in /etc/profile.d/*.sh; do
     [ -r "${script}" ] && . "${script}"
 done
