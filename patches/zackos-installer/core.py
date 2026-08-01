@@ -88,12 +88,44 @@ def mount_target(part):
     run(f"mount {part} {TARGET}")
 
 
+def check_disk_space(excludes):
+    """Rough preflight check that the target has enough room for the copy.
+    NOTE: deliberately NOT using `du -x`/--one-file-system here. On this
+    live system's overlayfs root, unmodified files are still backed by the
+    lower (squashfs) device while copied-up files are backed by the upper
+    (tmpfs) device, so `-x` silently excludes almost everything and
+    undercounts to ~0. The excludes list already covers every other real
+    mount in this live environment (proc/sys/dev/tmp/run/mnt/media), so a
+    plain `du -s` over `/` gives the same effective total tar will copy.
+    """
+    du_excludes = " ".join(f"--exclude={e}" for e in excludes)
+    result = subprocess.run(
+        f"du -s {du_excludes} --block-size=1 /", shell=True,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    try:
+        needed_bytes = int(result.stdout.decode().split()[0])
+    except Exception:
+        log("Warning: could not estimate required disk space, skipping preflight check.")
+        return
+    needed_gb = needed_bytes / (1024 ** 3)
+    st = os.statvfs(TARGET)
+    free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+    log(f"Space check: need ~{needed_gb:.2f}G, target has {free_gb:.2f}G free.")
+    if free_gb < needed_gb * 1.15:
+        raise InstallError(
+            f"Not enough space on target: need ~{needed_gb:.2f}G (+headroom), "
+            f"only {free_gb:.2f}G free. Use a larger disk and try again."
+        )
+
+
 def copy_system(exclude_extra=None):
     """Copy the currently running live root filesystem onto the target."""
     excludes = ["/proc", "/sys", "/dev", "/tmp", "/run", "/mnt", "/media",
                 "/root/persist_test.txt"]
     if exclude_extra:
         excludes += exclude_extra
+    check_disk_space(excludes)
     tar_excludes = " ".join(f"--exclude={e}" for e in excludes)
     log("Copying base system to target disk (this can take a few minutes)...")
     cmd = (
@@ -117,7 +149,19 @@ def chroot_run(cmd):
 
 def install_bootloader(disk, part):
     log("Installing GRUB bootloader...")
-    run(f"grub-install --target=i386-pc --boot-directory={TARGET}/boot "
+    # Use the full path, not bare 'grub-install': grub is provided via a
+    # /usr/local/sbin symlink into the Nix store, but /usr/local/sbin is not
+    # guaranteed to be on $PATH for every shell context this runs under
+    # (confirmed: bare 'grub-install' -> "command not found" from the live
+    # environment's default non-login PATH, even though the binary exists
+    # and works fine).
+    grub_install = shutil.which("grub-install") or "/usr/local/sbin/grub-install"
+    if not os.path.exists(grub_install):
+        raise InstallError(
+            "grub-install not found (checked $PATH and /usr/local/sbin). "
+            "The live/target rootfs is missing GRUB tools."
+        )
+    run(f"{grub_install} --target=i386-pc --boot-directory={TARGET}/boot "
         f"--modules='part_msdos ext2 biosdisk' {disk}")
     write_grub_cfg(part)
 

@@ -1,6 +1,11 @@
 #!/bin/sh
 # ZackOS installer dispatcher.
 # Usage: zackos-install [easy|manual]
+# Explicitly set PATH here rather than relying on /etc/profile having been
+# sourced (this can be invoked from a non-login shell context too), so
+# Nix-provided tools (grub, dhcpcd, etc.) are always reachable by the
+# installer's own subprocess calls.
+export PATH="/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:$PATH"
 MODE="${1:-easy}"
 case "$MODE" in
     manual)
