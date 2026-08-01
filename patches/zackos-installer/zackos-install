@@ -1,0 +1,12 @@
+#!/bin/sh
+# ZackOS installer dispatcher.
+# Usage: zackos-install [easy|manual]
+MODE="${1:-easy}"
+case "$MODE" in
+    manual)
+        exec python3 /usr/local/lib/zackos-installer/manual.py
+        ;;
+    easy|*)
+        exec python3 /usr/local/lib/zackos-installer/tui.py
+        ;;
+esac
