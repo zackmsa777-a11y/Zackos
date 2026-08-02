@@ -91,11 +91,11 @@ chroot rootfs /bin/sh -c "export PATH=/usr/local/sbin:\$PATH; grub-install --ver
 echo "grub-install OK"
 
 echo "=== [6b/8] install dhcpcd into rootfs via nix (live-boot DHCP + installer network access) ==="
-DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" 2>/dev/null | head -1)
+DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" ! -name "*.drv" 2>/dev/null | head -1)
 if [ -z "$DHCPCD_DIR" ]; then
   NIX_BIN="/${NIX_STORE_PATH}/bin"
   chroot rootfs /bin/sh -c "export PATH=$NIX_BIN:\$PATH; export HOME=/root; nix-env -f https://github.com/NixOS/nixpkgs/archive/nixos-unstable.tar.gz -iA dhcpcd" || true
-  DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" 2>/dev/null | head -1)
+  DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" ! -name "*.drv" 2>/dev/null | head -1)
 fi
 test -n "$DHCPCD_DIR" || { echo "FATAL: dhcpcd not present in nix store after install attempt"; exit 1; }
 DHCPCD_STORE=${DHCPCD_DIR#rootfs/}
