@@ -172,22 +172,25 @@ def write_grub_cfg(part, label="ZACKROOT"):
     gfxterm` (graphical framebuffer) which is invisible over a serial
     console and caused real hangs during boot testing in this project.
 
-    Identify root by filesystem LABEL, not UUID or a raw device path.
-    Device paths (/dev/vdb1) are NOT stable across different disk/bus
-    configurations at boot time (confirmed: install with 2 disks attached
-    names the target vdb, but booting standalone with only 1 disk renames
-    it vda, causing a hardcoded /dev/vdb1 to kernel-panic with
-    'VFS: Unable to mount root fs on unknown-block'). UUID *should* be
-    stable too, but reading it back via `blkid` right after mke2fs proved
-    unreliable in practice here - confirmed a real case where blkid
-    returned a UUID that did not match what was actually on the freshly
-    formatted partition (stale/cached probe), producing a grub.cfg that
-    pointed at a UUID the kernel could never find, i.e. an unbootable
-    install with no error during the install itself. The filesystem LABEL
-    is set directly by us in format_partition() (mke2fs -L), so we already
-    know its exact value with certainty - no probing/caching layer needed
-    at all. Use that instead; it's just as stable across enumeration order
-    as a UUID would be.
+    IMPORTANT - two separate identifiers are needed here, for two
+    different consumers, confirmed the hard way across three broken
+    attempts:
+
+    1. GRUB's own `search` command (finds the filesystem containing
+       /boot so it can load the kernel file) - this DOES understand
+       --fs-uuid natively and works fine. Keep using the filesystem UUID
+       here, read fresh via blkid right before writing the config.
+
+    2. The kernel's root= boot parameter - this system has NO initramfs
+       (confirmed: no `initrd` line below), so there is no udev/mdev to
+       populate /dev/disk/by-uuid or /dev/disk/by-label before the root
+       mount attempt. Plain `root=UUID=...` and `root=LABEL=...` are
+       NOT reliably resolved by the bare kernel without an initramfs -
+       both were tried here and both produced 'VFS: Unable to mount
+       root fs on unknown-block(0,0)'. The one identifier the kernel CAN
+       resolve with no initramfs, straight from the partition table
+       itself (no filesystem superblock scan needed) is PARTUUID. Use
+       that for root=.
     """
     boot_dir = os.path.join(TARGET, "boot")
     kernels = sorted(
@@ -197,17 +200,21 @@ def write_grub_cfg(part, label="ZACKROOT"):
         raise InstallError("No kernel found in /boot on target - cannot write grub.cfg")
     kernel = kernels[-1]
 
-    # Belt-and-suspenders sanity check: confirm the label we're about to
-    # bake into grub.cfg actually matches what's really on the partition,
-    # so we fail loudly at install time instead of silently at boot time.
     run("sync", check=False)
-    proc = subprocess.run(f"blkid -c /dev/null -s LABEL -o value {part}", shell=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    actual_label = proc.stdout.decode().strip()
-    if actual_label and actual_label != label:
+
+    def blkid_field(field):
+        proc = subprocess.run(f"blkid -c /dev/null -s {field} -o value {part}", shell=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        return proc.stdout.decode().strip()
+
+    fs_uuid = blkid_field("UUID")
+    partuuid = blkid_field("PARTUUID")
+    if not fs_uuid:
+        raise InstallError(f"Could not read filesystem UUID for {part}")
+    if not partuuid:
         raise InstallError(
-            f"Label mismatch on {part}: expected '{label}', blkid reports "
-            f"'{actual_label}'. Refusing to write a grub.cfg that wouldn't boot."
+            f"Could not read PARTUUID for {part} - needed for a no-initramfs "
+            "boot. Check the partition table type (expected msdos/dos)."
         )
 
     grub_dir = os.path.join(TARGET, "boot/grub")
@@ -219,20 +226,19 @@ set default=0
 
 insmod part_msdos
 insmod ext2
-search --no-floppy --fs-label --set=root {label}
+search --no-floppy --fs-uuid --set=root {fs_uuid}
 terminal_output console
 
 menuentry "ZackOS" {{
-    linux /boot/{kernel} root=LABEL={label} ro console=tty0 console=ttyS0,115200
+    linux /boot/{kernel} root=PARTUUID={partuuid} ro console=tty0 console=ttyS0,115200
 }}
 
 menuentry "ZackOS (recovery / single-user)" {{
-    linux /boot/{kernel} root=LABEL={label} ro single console=tty0 console=ttyS0,115200
+    linux /boot/{kernel} root=PARTUUID={partuuid} ro single console=tty0 console=ttyS0,115200
 }}
 """
     with open(os.path.join(grub_dir, "grub.cfg"), "w") as f:
         f.write(cfg)
-
 
 def write_fstab(part, label="ZACKROOT"):
     fstab_path = os.path.join(TARGET, "etc/fstab")
