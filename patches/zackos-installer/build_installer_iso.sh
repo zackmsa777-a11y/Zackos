@@ -60,6 +60,17 @@ mkdir -p usr/local/lib/zackos-installer usr/local/bin
 cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos-installer/
 cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
 chmod +x usr/local/bin/zackinstall
+
+# Bake in the PATH fix permanently: /etc/profile previously only set LANG,
+# leaving login shells with PATH=/usr/sbin:/usr/bin (no /usr/local/{bin,sbin}),
+# so bare `zackinstall`/`grub-install`/`dhcpcd` were "command not found" even
+# though the binaries/symlinks exist. This must be re-applied on every
+# rebuild since it lives in the base rootfs, not just the installer files.
+if ! grep -q "usr/local/sbin" etc/profile 2>/dev/null; then
+  cat >> etc/profile <<'PROFEOF'
+export PATH="/usr/local/sbin:/usr/local/bin:$PATH"
+PROFEOF
+fi
 cd "$WORK"
 
 echo "=== [6/8] install grub2 into rootfs via nix (needs network) ==="
