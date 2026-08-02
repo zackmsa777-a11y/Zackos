@@ -2,15 +2,19 @@
 
 Source for the ZackOS installer, meant to be dropped into the live
 environment at:
-- `/usr/local/lib/zackos-installer/{core,manual,tui}.py`
-- `/usr/local/bin/zackos-install` (dispatcher: `zackos-install easy|manual`)
+- `/usr/local/lib/zackos-installer/{core,zackinstall}.py`
+- `/usr/local/bin/zackinstall` (the installer entrypoint)
 
-## Tiers
-- **Easy** (`tui.py`): archinstall-style, automated, minimal questions,
-  sensible defaults (i3-wm + sysvinit).
-- **Medium** (`manual.py`): Arch-manual-style, every command echoed before
-  running, full control over WM/init/disk/hostname/user.
-- **Advanced**: gentoo-manual-style, not yet implemented.
+## One installer: ZackInstall
+The old "Easy" (archinstall-style TUI) tier has been removed. ZackInstall
+(`zackinstall.py`) is now the only installer ZackOS ships: every command
+`core.run()` executes is echoed to the terminal before it runs, full
+control over WM/init/disk/hostname/user, plain sequential Q&A, no curses.
+
+Once ZackInstall is confirmed solid end-to-end, the plan is to also
+publish a copy-paste, wiki-style install guide (Arch Wiki / Gentoo
+Handbook style) documenting the same steps by hand, for people who'd
+rather run the commands themselves than go through the script.
 
 ## Key bugs fixed in core.py (both found via real QEMU boot testing)
 1. **GRUB gfxterm hang**: `grub-mkconfig`'s auto-generated grub.cfg defaults
@@ -25,7 +29,7 @@ environment at:
    unknown-block". Fix: use `root=UUID=<uuid>` instead, which is stable
    regardless of enumeration order.
 
-Both fixes verified end-to-end: full install via `zackos-install manual`
+Both fixes verified end-to-end: full install via `zackinstall`
 using a 2-disk QEMU setup (persistence disk + blank install target), then
 a *separate* standalone boot of the install target alone, reaching a
 working GRUB menu and successful `switch_root`/kernel boot.

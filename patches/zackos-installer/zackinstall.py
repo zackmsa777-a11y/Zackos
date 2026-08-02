@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-ZackOS Manual Installer - "Medium" tier (Arch-manual-style).
+ZackInstall - ZackOS's manual, Arch/Gentoo-manual-style installer.
 Every command core.run() executes is echoed to the terminal first, so the
 user sees exactly what's happening at each step. Plain sequential Q&A,
-no curses.
+no curses, no hidden automation.
+
+This is the ONLY installer tier ZackOS ships now - the old "easy"
+(archinstall-style TUI) tier has been removed. Once this is confirmed
+solid, the plan is to also publish a copy-paste, wiki-style install guide
+(in the Arch Wiki / Gentoo Handbook tradition) documenting these same
+steps by hand for people who want to run them manually instead of through
+this script.
 """
 import sys
 sys.path.insert(0, "/usr/local/lib/zackos-installer")
@@ -23,7 +30,7 @@ def ask_yesno(prompt, default="no"):
 
 def main():
     print("=" * 60)
-    print(" ZackOS Manual Installer")
+    print(" ZackInstall - the ZackOS installer")
     print(" Every command is shown before it runs. Ctrl-C to abort.")
     print("=" * 60)
     print()
