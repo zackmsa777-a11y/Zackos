@@ -147,7 +147,7 @@ def chroot_run(cmd):
     return result
 
 
-def install_bootloader(disk, part):
+def install_bootloader(disk, part, label="ZACKROOT"):
     log("Installing GRUB bootloader...")
     # Use the full path, not bare 'grub-install': grub is provided via a
     # /usr/local/sbin symlink into the Nix store, but /usr/local/sbin is not
@@ -163,21 +163,31 @@ def install_bootloader(disk, part):
         )
     run(f"{grub_install} --target=i386-pc --boot-directory={TARGET}/boot "
         f"--modules='part_msdos ext2 biosdisk' {disk}")
-    write_grub_cfg(part)
+    write_grub_cfg(part, label)
 
 
-def write_grub_cfg(part):
+def write_grub_cfg(part, label="ZACKROOT"):
     """Hand-write a minimal grub.cfg instead of trusting grub-mkconfig's
     auto-generated config. grub-mkconfig defaults to `terminal_output
     gfxterm` (graphical framebuffer) which is invisible over a serial
     console and caused real hangs during boot testing in this project.
-    Also use root=UUID=... (not a raw device path like /dev/vdb1) since
-    device names are NOT stable across different disk/bus configurations
-    at boot time (confirmed: install with 2 disks attached names the
-    target vdb, but booting standalone with only 1 disk renames it vda,
-    causing a hardcoded /dev/vdb1 to kernel-panic with
-    'VFS: Unable to mount root fs on unknown-block'). UUID is stable
-    regardless of enumeration order/bus.
+
+    Identify root by filesystem LABEL, not UUID or a raw device path.
+    Device paths (/dev/vdb1) are NOT stable across different disk/bus
+    configurations at boot time (confirmed: install with 2 disks attached
+    names the target vdb, but booting standalone with only 1 disk renames
+    it vda, causing a hardcoded /dev/vdb1 to kernel-panic with
+    'VFS: Unable to mount root fs on unknown-block'). UUID *should* be
+    stable too, but reading it back via `blkid` right after mke2fs proved
+    unreliable in practice here - confirmed a real case where blkid
+    returned a UUID that did not match what was actually on the freshly
+    formatted partition (stale/cached probe), producing a grub.cfg that
+    pointed at a UUID the kernel could never find, i.e. an unbootable
+    install with no error during the install itself. The filesystem LABEL
+    is set directly by us in format_partition() (mke2fs -L), so we already
+    know its exact value with certainty - no probing/caching layer needed
+    at all. Use that instead; it's just as stable across enumeration order
+    as a UUID would be.
     """
     boot_dir = os.path.join(TARGET, "boot")
     kernels = sorted(
@@ -187,11 +197,18 @@ def write_grub_cfg(part):
         raise InstallError("No kernel found in /boot on target - cannot write grub.cfg")
     kernel = kernels[-1]
 
-    proc = subprocess.run(f"blkid -s UUID -o value {part}", shell=True,
+    # Belt-and-suspenders sanity check: confirm the label we're about to
+    # bake into grub.cfg actually matches what's really on the partition,
+    # so we fail loudly at install time instead of silently at boot time.
+    run("sync", check=False)
+    proc = subprocess.run(f"blkid -c /dev/null -s LABEL -o value {part}", shell=True,
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    uuid = proc.stdout.decode().strip()
-    if not uuid:
-        raise InstallError(f"Could not read UUID for {part}")
+    actual_label = proc.stdout.decode().strip()
+    if actual_label and actual_label != label:
+        raise InstallError(
+            f"Label mismatch on {part}: expected '{label}', blkid reports "
+            f"'{actual_label}'. Refusing to write a grub.cfg that wouldn't boot."
+        )
 
     grub_dir = os.path.join(TARGET, "boot/grub")
     os.makedirs(grub_dir, exist_ok=True)
@@ -202,15 +219,15 @@ set default=0
 
 insmod part_msdos
 insmod ext2
-search --no-floppy --fs-uuid --set=root {uuid}
+search --no-floppy --fs-label --set=root {label}
 terminal_output console
 
 menuentry "ZackOS" {{
-    linux /boot/{kernel} root=UUID={uuid} ro console=tty0 console=ttyS0,115200
+    linux /boot/{kernel} root=LABEL={label} ro console=tty0 console=ttyS0,115200
 }}
 
 menuentry "ZackOS (recovery / single-user)" {{
-    linux /boot/{kernel} root=UUID={uuid} ro single console=tty0 console=ttyS0,115200
+    linux /boot/{kernel} root=LABEL={label} ro single console=tty0 console=ttyS0,115200
 }}
 """
     with open(os.path.join(grub_dir, "grub.cfg"), "w") as f:
