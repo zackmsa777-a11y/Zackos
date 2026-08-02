@@ -61,16 +61,16 @@ cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos
 cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
 chmod +x usr/local/bin/zackinstall
 
-# Bake in the PATH fix permanently: /etc/profile previously only set LANG,
-# leaving login shells with PATH=/usr/sbin:/usr/bin (no /usr/local/{bin,sbin}),
-# so bare `zackinstall`/`grub-install`/`dhcpcd` were "command not found" even
-# though the binaries/symlinks exist. This must be re-applied on every
-# rebuild since it lives in the base rootfs, not just the installer files.
-if ! grep -q "usr/local/sbin" etc/profile 2>/dev/null; then
-  cat >> etc/profile <<'PROFEOF'
-export PATH="/usr/local/sbin:/usr/local/bin:$PATH"
-PROFEOF
-fi
+# Bake in the checkpointed /etc/profile + network-init fixes permanently.
+# These live in git as reference patches (patches/etc-configs/profile,
+# patches/etc-configs/network-init) from the 2026-08-01 fix session but were
+# NEVER actually applied by this build script before now -- confirmed via a
+# live boot test (bare `zackinstall`/`ip addr` both broken: PATH missing
+# /usr/local/{bin,sbin}, ens3 stayed DOWN with no DHCP client running).
+cp "$WORK/gh_repo/patches/etc-configs/profile" etc/profile
+cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/init.d/network
+cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/rc.d/init.d/network
+chmod +x etc/init.d/network etc/rc.d/init.d/network
 cd "$WORK"
 
 echo "=== [6/8] install grub2 into rootfs via nix (needs network) ==="
@@ -89,6 +89,20 @@ for b in $(ls "rootfs/$GRUB_STORE/sbin/"); do
 done
 chroot rootfs /bin/sh -c "export PATH=/usr/local/sbin:\$PATH; grub-install --version" || { echo "FATAL: grub-install not runnable"; exit 1; }
 echo "grub-install OK"
+
+echo "=== [6b/8] install dhcpcd into rootfs via nix (live-boot DHCP + installer network access) ==="
+DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" 2>/dev/null | head -1)
+if [ -z "$DHCPCD_DIR" ]; then
+  NIX_BIN="/${NIX_STORE_PATH}/bin"
+  chroot rootfs /bin/sh -c "export PATH=$NIX_BIN:\$PATH; export HOME=/root; nix-env -f https://github.com/NixOS/nixpkgs/archive/nixos-unstable.tar.gz -iA dhcpcd" || true
+  DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" 2>/dev/null | head -1)
+fi
+test -n "$DHCPCD_DIR" || { echo "FATAL: dhcpcd not present in nix store after install attempt"; exit 1; }
+DHCPCD_STORE=${DHCPCD_DIR#rootfs/}
+echo "dhcpcd store path: $DHCPCD_STORE"
+ln -sf "/$DHCPCD_STORE/sbin/dhcpcd" rootfs/usr/local/sbin/dhcpcd
+chroot rootfs /bin/sh -c "export PATH=/usr/local/sbin:\$PATH; dhcpcd --version" || { echo "FATAL: dhcpcd not runnable"; exit 1; }
+echo "dhcpcd OK"
 
 echo "=== [7/8] repack squashfs + ISO ==="
 cd rootfs
