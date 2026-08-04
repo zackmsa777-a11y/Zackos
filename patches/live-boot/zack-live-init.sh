@@ -59,6 +59,9 @@ probe_label() {
 }
 
 PERSISTDEV=""
+# Make host block devices visible to the squashfs userspace blkid probe.
+mkdir -p /mnt/squash/dev
+mount --bind /dev /mnt/squash/dev 2>/dev/null || true
 for n in /sys/block/*; do
     base=$(basename "$n")
     case "$base" in loop*|ram*) continue ;; esac
