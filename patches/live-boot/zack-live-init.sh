@@ -45,7 +45,19 @@ mount -t squashfs -o loop,ro /mnt/cdrom/squash.img /mnt/squash || {
 }
 
 # Debian-style persistence: only a filesystem explicitly labeled ZACKPERSIST
-# is eligible. A blank target disk is never formatted or mounted here.
+# and containing persistence.conf is eligible. A blank target disk is never
+# formatted or mounted here. The tiny initramfs has no blkid, so use the
+# userspace copy from the already-mounted ZackOS squashfs through chroot.
+probe_label() {
+    if command -v blkid >/dev/null 2>&1; then
+        blkid -s LABEL -o value "$1" 2>/dev/null
+    elif [ -x /mnt/squash/usr/sbin/blkid ] && [ -x /bin/chroot ]; then
+        chroot /mnt/squash /usr/sbin/blkid -s LABEL -o value "$1" 2>/dev/null
+    else
+        echo ""
+    fi
+}
+
 PERSISTDEV=""
 for n in /sys/block/*; do
     base=$(basename "$n")
@@ -53,11 +65,14 @@ for n in /sys/block/*; do
     for dev in "/dev/$base" /dev/"$base"[0-9]*; do
         [ -b "$dev" ] || continue
         [ "$dev" = "$CDDEV" ] && continue
-        label=$(blkid -s LABEL -o value "$dev" 2>/dev/null || true)
+        label=$(probe_label "$dev" || true)
         [ "$label" = "ZACKPERSIST" ] || continue
         if mount -t ext4 -o rw "$dev" /mnt/persist 2>/dev/null; then
-            PERSISTDEV="$dev"
-            break 2
+            if [ -f /mnt/persist/persistence.conf ]; then
+                PERSISTDEV="$dev"
+                break 2
+            fi
+            umount /mnt/persist 2>/dev/null || true
         fi
     done
 done
