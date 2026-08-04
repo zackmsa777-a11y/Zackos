@@ -70,6 +70,9 @@ mkdir -p usr/local/lib/zackos-installer usr/local/bin
 cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos-installer/
 cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
 chmod +x usr/local/bin/zackinstall
+# Testing-only live login so QEMU/serial verification can reach ZackInstall.
+# Installed systems still receive the password selected in ZackInstall.
+chroot "$WORK/rootfs" /bin/sh -c "echo 'root:zackos' | chpasswd"
 
 # Bake in the checkpointed /etc/profile + network-init fixes permanently.
 # These live in git as reference patches (patches/etc-configs/profile,
