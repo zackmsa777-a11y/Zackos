@@ -10,6 +10,9 @@ import subprocess
 import sys
 import shutil
 
+from providers.profile import InstallerProfile
+from providers.registry import validate_profile
+
 TARGET = "/mnt/target"
 NIX_CHANNEL = "/nix/var/nix/profiles/per-user/root/channels/nixpkgs"
 
@@ -294,6 +297,15 @@ def create_user(username, password, use_wheel=True):
         chroot_run(f"usermod -aG wheel {username}")
 
 
+def write_profile(profile):
+    """Persist the exact LFS composition selected by the user."""
+    path = os.path.join(TARGET, "etc/zackos")
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, "profile.toml"), "w") as f:
+        f.write(profile.to_toml())
+    log(f"Wrote ZackOS profile: {profile.to_dict()}")
+
+
 def install_wm(choice):
     if choice == "none":
         log("Skipping WM install (console-only system).")
@@ -387,20 +399,27 @@ def cleanup_mounts():
     run(f"umount -lf {TARGET}", check=False)
 
 
-def full_install(disk, wm_choice, init_choice, hostname, root_password,
-                  username=None, user_password=None):
+def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
+                  root_password="", username=None, user_password=None, profile=None):
+    profile = profile or InstallerProfile(
+        desktop=wm_choice or "i3", init=init_choice or "sysvinit"
+    )
+    errors = validate_profile(profile, require_implemented=True)
+    if errors:
+        raise InstallError("Profile is not installable yet: " + "; ".join(errors))
     part = partition_disk(disk)
     format_partition(part)
     mount_target(part)
     try:
         copy_system()
         write_fstab(part)
+        write_profile(profile)
         set_hostname(hostname)
         set_root_password(root_password)
         if username:
             create_user(username, user_password or root_password)
-        install_wm(wm_choice)
-        install_init(init_choice)
+        install_wm(profile.desktop)
+        install_init(profile.init)
         install_bootloader(disk, part)
     finally:
         cleanup_mounts()
