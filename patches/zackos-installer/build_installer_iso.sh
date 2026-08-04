@@ -68,6 +68,7 @@ ln -sf "/${NIX_STORE_PATH}/bin/nix" proc/self/exe
 cp /etc/resolv.conf etc/resolv.conf
 mkdir -p usr/local/lib/zackos-installer usr/local/bin
 cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos-installer/
+cp -a "$INSTALLER_SRC"/providers usr/local/lib/zackos-installer/
 cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
 chmod +x usr/local/bin/zackinstall
 # Testing-only live login so QEMU/serial verification can reach ZackInstall.
