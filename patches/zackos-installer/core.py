@@ -327,30 +327,47 @@ def install_wm(choice):
 
 
 def link_nix_bins(names):
-    """After nix-env install inside target, symlink real store binaries into
-    /usr/local/bin since the nix-env profile activation is unreliable
-    without a pty (see build notes) - find the real derivation paths."""
+    """Expose Nix package executables from both bin/ and sbin/.
+
+    runit installs its PID1/stage binary as ``sbin/runit`` on some Nix
+    revisions, while runsvdir/sv may live in ``bin``.  Looking in only one
+    directory was the cause of the old ``/sbin/init`` service failure.
+    """
     nix_store = os.path.join(TARGET, "nix/store")
     if not os.path.isdir(nix_store):
-        return
-    bin_dir = os.path.join(TARGET, "usr/local/bin")
-    os.makedirs(bin_dir, exist_ok=True)
+        raise InstallError("Nix store is missing; cannot install provider binaries")
+    destinations = {
+        "bin": os.path.join(TARGET, "usr/local/bin"),
+        "sbin": os.path.join(TARGET, "usr/local/sbin"),
+    }
+    found = set()
+    for directory in destinations.values():
+        os.makedirs(directory, exist_ok=True)
     for entry in os.listdir(nix_store):
-        bin_path = os.path.join(nix_store, entry, "bin")
-        if os.path.isdir(bin_path):
+        for subdir, destination in destinations.items():
+            source_dir = os.path.join(nix_store, entry, subdir)
+            if not os.path.isdir(source_dir):
+                continue
             for name in names:
-                candidate = os.path.join(bin_path, name)
+                candidate = os.path.join(source_dir, name)
                 if os.path.isfile(candidate) or os.path.islink(candidate):
-                    link_path = os.path.join(bin_dir, name)
+                    link_path = os.path.join(destination, name)
                     if not os.path.exists(link_path):
-                        os.symlink(f"/nix/store/{entry}/bin/{name}", link_path)
+                        os.symlink(f"/nix/store/{entry}/{subdir}/{name}", link_path)
+                    found.add(name)
+    missing = sorted(set(names) - found)
+    if missing:
+        raise InstallError("Provider binaries were not found in the Nix store: " + ", ".join(missing))
 
 
 def install_init(choice):
     if choice == "sysvinit":
         log("Keeping sysvinit (default, already configured).")
         return
-    log("Installing runit via Nix (experimental init option)...")
+    if choice != "runit":
+        raise InstallError(f"Init provider {choice!r} is not implemented yet")
+
+    log("Installing runit with explicit stage/service wiring...")
     export = (
         f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
         f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; "
@@ -359,37 +376,54 @@ def install_init(choice):
     link_nix_bins(["runit", "runsvdir", "runsv", "sv", "chpst", "svlogd"])
 
     etc_runit = os.path.join(TARGET, "etc/runit")
+    service_dir = os.path.join(TARGET, "etc/service")
     os.makedirs(etc_runit, exist_ok=True)
-    os.makedirs(os.path.join(TARGET, "etc/service/agetty-tty1"), exist_ok=True)
+    os.makedirs(service_dir, exist_ok=True)
 
+    # Stage 1 mounts the virtual filesystems that SysVinit used to mount.
     with open(os.path.join(etc_runit, "1"), "w") as f:
         f.write(
             "#!/bin/sh\n"
-            "mount -t proc proc /proc 2>/dev/null\n"
-            "mount -t sysfs sysfs /sys 2>/dev/null\n"
-            "mount -t devtmpfs devtmpfs /dev 2>/dev/null\n"
-            "mount -a\n"
-            "hostname -F /etc/hostname\n"
+            "mount -t proc proc /proc 2>/dev/null || true\n"
+            "mount -t sysfs sysfs /sys 2>/dev/null || true\n"
+            "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n"
+            "mount -t devpts devpts /dev/pts 2>/dev/null || true\n"
+            "mount -t tmpfs tmpfs /run 2>/dev/null || true\n"
+            "mount -a 2>/dev/null || true\n"
+            "hostname -F /etc/hostname 2>/dev/null || true\n"
             "exit 0\n"
         )
+    # Stage 2 must use the absolute provider path; PID1 has no reliable PATH.
     with open(os.path.join(etc_runit, "2"), "w") as f:
-        f.write("#!/bin/sh\nexec runsvdir -P /etc/service\n")
+        f.write("#!/bin/sh\nexec /usr/local/bin/runsvdir -P /etc/service\n")
     with open(os.path.join(etc_runit, "3"), "w") as f:
-        f.write("#!/bin/sh\nsv -w 5 force-stop /etc/service/*\n")
+        f.write(
+            "#!/bin/sh\n"
+            "for service in /etc/service/*; do\n"
+            "  [ -d \"$service\" ] || continue\n"
+            "  /usr/local/bin/sv -w 5 force-stop \"$service\" 2>/dev/null || true\n"
+            "done\n"
+        )
     for fname in ("1", "2", "3"):
         os.chmod(os.path.join(etc_runit, fname), 0o755)
 
-    getty_run = os.path.join(TARGET, "etc/service/agetty-tty1/run")
-    with open(getty_run, "w") as f:
-        f.write("#!/bin/sh\nexec agetty tty1 38400 linux\n")
-    os.chmod(getty_run, 0o755)
+    def write_service(name, command):
+        directory = os.path.join(service_dir, name)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "run"), "w") as f:
+            f.write("#!/bin/sh\nexec " + command + "\n")
+        os.chmod(os.path.join(directory, "run"), 0o755)
 
-    # swap init - keep old sysvinit as fallback at /sbin/init.sysvinit
+    # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
+    write_service("agetty-tty1", "/sbin/agetty tty1 38400 linux")
+    write_service("agetty-ttyS0", "/sbin/agetty -L 115200 ttyS0 vt100")
+
+    # runit is PID1; preserve SysVinit as a recovery binary.
     sbin_init = os.path.join(TARGET, "sbin/init")
     if os.path.exists(sbin_init) and not os.path.islink(sbin_init):
-        shutil.copy(sbin_init, sbin_init + ".sysvinit")
+        shutil.copy2(sbin_init, sbin_init + ".sysvinit")
     with open(sbin_init, "w") as f:
-        f.write("#!/bin/sh\nexec /usr/local/bin/runit\n")
+        f.write("#!/bin/sh\nexec /usr/local/sbin/runit\n")
     os.chmod(sbin_init, 0o755)
 
 
