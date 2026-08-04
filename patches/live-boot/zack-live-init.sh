@@ -104,5 +104,8 @@ if [ -f /newroot/etc/fstab ]; then
 fi
 touch /newroot/fastboot
 mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/mnt/cdrom /newroot/mnt/persist
+if [ -n "$PERSISTDEV" ]; then
+    mount --bind /mnt/persist /newroot/mnt/persist 2>/dev/null || true
+fi
 log "Starting ZackOS userspace"
 exec switch_root /newroot /sbin/init
