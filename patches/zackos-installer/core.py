@@ -260,11 +260,18 @@ menuentry "ZackOS (recovery / single-user)" {{
 def write_fstab(part, label="ZACKROOT"):
     fstab_path = os.path.join(TARGET, "etc/fstab")
     with open(fstab_path, "w") as f:
-        f.write(f"LABEL={label}  /  ext4  defaults  0  1\n")
-        f.write("proc  /proc  proc  defaults  0  0\n")
-        f.write("sysfs /sys sysfs defaults  0  0\n")
+        # Keep the LFS virtual-filesystem mounts complete: SysVinit's
+        # mountvirtfs service expects /run, devtmpfs, and cgroup2 here.
+        # Without them an installed root booted with the kernel's default
+        # read-only flag stops before getty starts.
+        f.write(f"LABEL={label}  /  ext4  defaults  1  1\n")
+        f.write("proc  /proc  proc  nosuid,noexec,nodev  0  0\n")
+        f.write("sysfs /sys   sysfs nosuid,noexec,nodev  0  0\n")
         f.write("devpts /dev/pts devpts gid=5,mode=620 0 0\n")
-        f.write("tmpfs /dev/shm tmpfs defaults 0 0\n")
+        f.write("tmpfs /run   tmpfs defaults 0 0\n")
+        f.write("devtmpfs /dev devtmpfs mode=0755,nosuid 0 0\n")
+        f.write("tmpfs /dev/shm tmpfs nosuid,nodev 0 0\n")
+        f.write("cgroup2 /sys/fs/cgroup cgroup2 nosuid,noexec,nodev 0 0\n")
 
 
 def set_hostname(hostname):
