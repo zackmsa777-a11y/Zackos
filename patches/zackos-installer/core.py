@@ -326,7 +326,7 @@ def install_wm(choice):
     shutil.copy(xinitrc, root_xinitrc)
 
 
-def link_nix_bins(names):
+def link_nix_bins(names, require_all=False):
     """Expose Nix package executables from both bin/ and sbin/.
 
     runit installs its PID1/stage binary as ``sbin/runit`` on some Nix
@@ -356,8 +356,10 @@ def link_nix_bins(names):
                         os.symlink(f"/nix/store/{entry}/{subdir}/{name}", link_path)
                     found.add(name)
     missing = sorted(set(names) - found)
-    if missing:
+    if missing and require_all:
         raise InstallError("Provider binaries were not found in the Nix store: " + ", ".join(missing))
+    if missing:
+        log("Optional provider binaries unavailable: " + ", ".join(missing))
 
 
 def install_init(choice):
@@ -373,7 +375,7 @@ def install_init(choice):
         f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; "
     )
     chroot_run(export + "nix-env -iA nixpkgs.runit")
-    link_nix_bins(["runit", "runsvdir", "runsv", "sv", "chpst", "svlogd"])
+    link_nix_bins(["runit", "runsvdir", "runsv", "sv", "chpst", "svlogd"], require_all=True)
 
     etc_runit = os.path.join(TARGET, "etc/runit")
     service_dir = os.path.join(TARGET, "etc/service")
