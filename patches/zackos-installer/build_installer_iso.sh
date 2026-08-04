@@ -10,7 +10,7 @@ GH_TOKEN="${GITHUB_TOKEN}"
 echo "=== [1/8] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs git curl
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl
 
 mkdir -p "$WORK"
 cd "$WORK"
