@@ -42,7 +42,17 @@ def main():
 
     print("Available disks:")
     for i, (dev, size, model) in enumerate(disks, 1):
-        print(f"  {i}) {dev}  {size}  {model}")
+        label = ""
+        try:
+            import subprocess
+            label = subprocess.check_output(
+                ["blkid", "-s", "LABEL", "-o", "value", dev],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+        except Exception:
+            pass
+        suffix = f"  [{label} - DO NOT WIPE]" if label == "ZACKPERSIST" else ""
+        print(f"  {i}) {dev}  {size}  {model}{suffix}")
     choice = ask("Select target disk number", "1")
     try:
         idx = int(choice) - 1
@@ -59,7 +69,7 @@ def main():
     print("Window manager:")
     print("  1) i3 (i3-wm + xterm + dmenu, via Nix)")
     print("  2) none (console-only)")
-    wm_raw = ask("Choice", "none")
+    wm_raw = ask("Choice", "i3")
     wm_choice = "i3" if wm_raw.strip().lower() in ("1", "i3", "i3-wm") else "none"
 
     print()

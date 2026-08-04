@@ -65,8 +65,25 @@ def list_disks():
     return disks
 
 
+def is_persistence_disk(disk):
+    """Return True only for the explicitly labeled live persistence disk."""
+    try:
+        out = subprocess.check_output(
+            ["blkid", "-s", "LABEL", "-o", "value", disk],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        return out == "ZACKPERSIST"
+    except Exception:
+        return False
+
+
 def partition_disk(disk):
     """Wipe target disk, create a single bootable primary ext4 partition."""
+    if is_persistence_disk(disk):
+        raise InstallError(
+            f"Refusing to wipe {disk}: it is labeled ZACKPERSIST. "
+            "Choose the separate installation target disk."
+        )
     run(f"wipefs -a {disk}", check=False)
     sfdisk_script = "label: dos\nstart=2048, type=83, bootable\n"
     run(["sfdisk", disk], input_text=sfdisk_script)

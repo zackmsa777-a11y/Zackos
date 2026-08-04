@@ -39,6 +39,16 @@ xorriso -osirrox on -indev zackos_v42.iso -extract / iso_layout > /dev/null 2>&1
 unsquashfs -d rootfs iso_layout/squash.img > /dev/null 2>&1
 echo "rootfs size: $(du -sh rootfs | cut -f1)"
 
+echo "=== [4b/8] install ZackOS live persistence init ==="
+rm -rf initrd_work
+mkdir -p initrd_work
+# The base image ships a gzip-compressed cpio initramfs. Replace only its
+# early userspace init; kernel and the rest of the live image stay untouched.
+zcat iso_layout/boot/initramfs.img | (cd initrd_work && cpio -idm --quiet)
+cp "$INSTALLER_SRC/../live-boot/zack-live-init.sh" initrd_work/init
+chmod +x initrd_work/init
+(cd initrd_work && find . -print | cpio -o -H newc --quiet | gzip -9) > iso_layout/boot/initramfs.img
+
 echo "=== [5/8] prep chroot (dev nodes, resolv.conf, installer files) ==="
 cd rootfs
 rm -f dev/null dev/zero dev/random dev/urandom dev/tty dev/console
