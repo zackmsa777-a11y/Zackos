@@ -51,8 +51,8 @@ mount -t squashfs -o loop,ro /mnt/cdrom/squash.img /mnt/squash || {
 probe_label() {
     if command -v blkid >/dev/null 2>&1; then
         blkid -s LABEL -o value "$1" 2>/dev/null
-    elif [ -x /mnt/squash/usr/sbin/blkid ] && [ -x /bin/chroot ]; then
-        chroot /mnt/squash /usr/sbin/blkid -s LABEL -o value "$1" 2>/dev/null
+    elif [ -x /mnt/squash/usr/sbin/blkid ] && [ -x /bin/busybox ]; then
+        /bin/busybox chroot /mnt/squash /usr/sbin/blkid -s LABEL -o value "$1" 2>/dev/null
     else
         echo ""
     fi
