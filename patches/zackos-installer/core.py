@@ -421,11 +421,31 @@ def install_init(choice):
     write_service("agetty-ttyS0", "/sbin/agetty -L 115200 ttyS0 vt100")
 
     # runit is PID1; preserve SysVinit as a recovery binary.
+    # NOTE: nixpkgs' runit derivation installs everything into $out/bin
+    # only (confirmed against the upstream default.nix - installPhase does
+    # `mkdir -p $out/bin; cp -t $out/bin $(< ../package/commands)`, no sbin
+    # output exists at all). link_nix_bins() therefore only ever populates
+    # usr/local/bin/runit on the target, never usr/local/sbin/runit.
+    # Hard-coding the sbin path here would leave /sbin/init exec'ing a file
+    # that never exists -> kernel panic "no working init found" on first
+    # boot. Resolve the real installed path instead of assuming one.
+    runit_bin = None
+    for candidate in ("usr/local/bin/runit", "usr/local/sbin/runit"):
+        full = os.path.join(TARGET, candidate)
+        if os.path.exists(full) or os.path.islink(full):
+            runit_bin = "/" + candidate
+            break
+    if not runit_bin:
+        raise InstallError(
+            "runit binary not found under /usr/local/bin or /usr/local/sbin "
+            "on the target after install - refusing to write /sbin/init "
+            "(this would panic on boot with 'no working init found')."
+        )
     sbin_init = os.path.join(TARGET, "sbin/init")
     if os.path.exists(sbin_init) and not os.path.islink(sbin_init):
         shutil.copy2(sbin_init, sbin_init + ".sysvinit")
     with open(sbin_init, "w") as f:
-        f.write("#!/bin/sh\nexec /usr/local/sbin/runit\n")
+        f.write(f"#!/bin/sh\nexec {runit_bin}\n")
     os.chmod(sbin_init, 0o755)
 
 
