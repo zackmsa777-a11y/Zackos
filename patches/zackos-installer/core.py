@@ -399,18 +399,31 @@ def install_init(choice):
     # The kernel mounts root read-only (confirmed live: "VFS: Mounted root
     # (ext4 filesystem) readonly"). SysVinit's own rcS-style scripts always
     # remount it rw before anything else runs; our runit stage 1 was missing
-    # that step entirely. Without it, `mount -a` never touches root (it's
-    # already mounted, so fstab's rw option is never applied), and every
-    # later write to the root fs silently fails - including runsv's own
-    # supervise/lock file, reproduced live as:
+    # that step entirely. Without it, every later write to the root fs
+    # silently fails - including runsv's own supervise/lock file, reproduced
+    # live as:
     #   "runsv agetty-tty1: fatal: unable to open supervise/lock: file does
     #    not exist"
-    # Remount rw explicitly, first, before any other stage-1 step.
+    #
+    # A first attempt added a bare `mount -o remount,rw /` as the very first
+    # line of stage 1, before anything else - and it STILL failed live, with
+    # the remount itself throwing "Read-only file system" (confirmed by
+    # instrumenting stage 1 to log to a file: the log write itself failed
+    # with that exact error, proving the remount silently no-op'd). Root
+    # cause: bare `mount -o remount,rw /` with no explicit device performs
+    # the remount by looking up the current mount's source+fstype via
+    # /proc/self/mountinfo - but /proc isn't mounted yet at that point in
+    # stage 1 (it's mounted on a LATER line), so mount(8) can't resolve the
+    # existing mount and the remount is dropped. Confirmed by reproducing
+    # both ways live in QEMU: remount fails when attempted before /proc is
+    # mounted, succeeds when /proc is already mounted first.
+    # Fix: mount /proc FIRST, then do the rw remount (still bare - it will
+    # now resolve via /proc/self/mountinfo), then the rest.
     with open(os.path.join(etc_runit, "1"), "w") as f:
         f.write(
             "#!/bin/sh\n"
-            "mount -o remount,rw / 2>/dev/null || true\n"
             "mount -t proc proc /proc 2>/dev/null || true\n"
+            "mount -o remount,rw / 2>/dev/null || true\n"
             "mount -t sysfs sysfs /sys 2>/dev/null || true\n"
             "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n"
             "mount -t devpts devpts /dev/pts 2>/dev/null || true\n"
