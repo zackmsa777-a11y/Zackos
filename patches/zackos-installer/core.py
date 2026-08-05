@@ -383,9 +383,20 @@ def install_init(choice):
     os.makedirs(service_dir, exist_ok=True)
 
     # Stage 1 mounts the virtual filesystems that SysVinit used to mount.
+    # The kernel mounts root read-only (confirmed live: "VFS: Mounted root
+    # (ext4 filesystem) readonly"). SysVinit's own rcS-style scripts always
+    # remount it rw before anything else runs; our runit stage 1 was missing
+    # that step entirely. Without it, `mount -a` never touches root (it's
+    # already mounted, so fstab's rw option is never applied), and every
+    # later write to the root fs silently fails - including runsv's own
+    # supervise/lock file, reproduced live as:
+    #   "runsv agetty-tty1: fatal: unable to open supervise/lock: file does
+    #    not exist"
+    # Remount rw explicitly, first, before any other stage-1 step.
     with open(os.path.join(etc_runit, "1"), "w") as f:
         f.write(
             "#!/bin/sh\n"
+            "mount -o remount,rw / 2>/dev/null || true\n"
             "mount -t proc proc /proc 2>/dev/null || true\n"
             "mount -t sysfs sysfs /sys 2>/dev/null || true\n"
             "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n"
