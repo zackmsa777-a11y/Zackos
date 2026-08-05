@@ -396,12 +396,23 @@ def install_init(choice):
             "exit 0\n"
         )
     # Stage 2 must use the absolute provider path; PID1 has no reliable PATH.
+    # runsvdir itself launches "runsv" (and runsv launches per-service "run"
+    # scripts) via a PATH-based execvp, not an absolute path - confirmed
+    # against runit's runsvdir.c (svdir.c calls exec_prog(name) which uses
+    # execvp with the bare command name). With no PATH set for PID1's stage
+    # 2, that exec fails ENOENT ("file does not exist") even though runsv
+    # itself was correctly symlinked - reproduced live: runsvdir looped
+    # forever logging "fatal: unable to start runsv agetty-tty1: file does
+    # not exist" while the service's run script was present and executable.
+    # Export PATH explicitly so runsvdir's children can resolve.
+    runit_path_export = "export PATH=/usr/local/bin:/usr/local/sbin:/bin:/sbin:/usr/bin:/usr/sbin\n"
     with open(os.path.join(etc_runit, "2"), "w") as f:
-        f.write("#!/bin/sh\nexec /usr/local/bin/runsvdir -P /etc/service\n")
+        f.write("#!/bin/sh\n" + runit_path_export + "exec /usr/local/bin/runsvdir -P /etc/service\n")
     with open(os.path.join(etc_runit, "3"), "w") as f:
         f.write(
             "#!/bin/sh\n"
-            "for service in /etc/service/*; do\n"
+            + runit_path_export
+            + "for service in /etc/service/*; do\n"
             "  [ -d \"$service\" ] || continue\n"
             "  /usr/local/bin/sv -w 5 force-stop \"$service\" 2>/dev/null || true\n"
             "done\n"
