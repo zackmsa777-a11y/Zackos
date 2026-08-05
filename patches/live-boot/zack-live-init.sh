@@ -9,27 +9,36 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t tmpfs tmpfs /dev
 
 log() { echo "[ZackOS live] $*"; }
 
-# Give hotplugged QEMU/USB devices a moment to appear.
-sleep 1
-
 mkdir -p /mnt/cdrom /mnt/squash /mnt/persist /mnt/overlay /newroot
 CDDEV=""
 
 # Find the read-only ISO by content, not by unstable device name.
-for n in /sys/block/*; do
-    base=$(basename "$n")
-    case "$base" in loop*|ram*) continue ;; esac
-    for dev in "/dev/$base" /dev/"$base"[0-9]*; do
-        [ -b "$dev" ] || continue
-        umount /mnt/cdrom 2>/dev/null || true
-        if mount -t iso9660 -o ro "$dev" /mnt/cdrom 2>/dev/null || mount -o ro "$dev" /mnt/cdrom 2>/dev/null; then
-            if [ -f /mnt/cdrom/squash.img ]; then
-                CDDEV="$dev"
-                break 2
-            fi
+# CD/DVD controllers (real hardware and some QEMU/hypervisor AHCI/IDE
+# configs) can take longer than a single fixed sleep to register in
+# /sys/block - a one-shot scan after `sleep 1` races that and can find
+# nothing yet, dropping to a rescue shell even though the media is fine
+# and shows up moments later. Retry the whole scan for up to ~10s instead
+# of a single pass, giving slower hardware/controllers time to enumerate.
+attempt=0
+while [ -z "$CDDEV" ] && [ "$attempt" -lt 10 ]; do
+    attempt=$((attempt + 1))
+    for n in /sys/block/*; do
+        base=$(basename "$n")
+        case "$base" in loop*|ram*) continue ;; esac
+        for dev in "/dev/$base" /dev/"$base"[0-9]*; do
+            [ -b "$dev" ] || continue
             umount /mnt/cdrom 2>/dev/null || true
-        fi
+            if mount -t iso9660 -o ro "$dev" /mnt/cdrom 2>/dev/null || mount -o ro "$dev" /mnt/cdrom 2>/dev/null; then
+                if [ -f /mnt/cdrom/squash.img ]; then
+                    CDDEV="$dev"
+                    break 2
+                fi
+                umount /mnt/cdrom 2>/dev/null || true
+            fi
+        done
     done
+    [ -n "$CDDEV" ] && break
+    sleep 1
 done
 
 if [ -z "$CDDEV" ]; then
