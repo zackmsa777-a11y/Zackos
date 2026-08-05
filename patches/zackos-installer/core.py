@@ -162,6 +162,19 @@ def chroot_run(cmd):
     for src, dst in (("/proc", "proc"), ("/sys", "sys"), ("/dev", "dev")):
         dst_path = os.path.join(TARGET, dst)
         run(f"mount --bind {src} {dst_path}", check=False)
+    # BUG FIX (2026-08-05): the copied base system's /etc/resolv.conf is
+    # whatever existed at tar-copy time -- often stale/empty, since dhcpcd
+    # writes the live resolv.conf asynchronously. Any chroot_run that needs
+    # network (e.g. `nix-env -iA nixpkgs.runit`) then fails DNS resolution
+    # silently as "unable to download" errors, even though the live env
+    # itself has working network+DNS (confirmed: install FAILED on runit
+    # nix-env fetch, chpst/runitd never installed, while host resolv.conf
+    # had a valid nameserver the whole time). Always resync the live
+    # resolv.conf into the target immediately before every chroot_run.
+    try:
+        shutil.copyfile("/etc/resolv.conf", os.path.join(TARGET, "etc/resolv.conf"))
+    except OSError:
+        pass
     full = f"chroot {TARGET} /bin/bash -c \"{cmd}\""
     result = run(full, check=False)
     return result
