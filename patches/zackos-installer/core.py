@@ -375,7 +375,7 @@ def link_nix_bins(names, require_all=False):
         log("Optional provider binaries unavailable: " + ", ".join(missing))
 
 
-def install_init(choice):
+def install_init(choice, part=None):
     if choice == "sysvinit":
         log("Keeping sysvinit (default, already configured).")
         return
@@ -419,11 +419,25 @@ def install_init(choice):
     # mounted, succeeds when /proc is already mounted first.
     # Fix: mount /proc FIRST, then do the rw remount (still bare - it will
     # now resolve via /proc/self/mountinfo), then the rest.
+    # BUG FIX (2026-08-07): even with /proc mounted first (above), the bare
+    # `mount -o remount,rw /` still silently no-op'd on a from-scratch
+    # install/boot cycle (reproduced live: root stayed read-only, runsv's
+    # supervise/lock writes kept failing). Root cause: bare remount with no
+    # explicit source resolves the CURRENT mount's device via
+    # /proc/self/mountinfo by matching against the udev-populated
+    # /dev/disk/by-label/* symlink for the fstab LABEL - but this early in
+    # boot (before any udev/mdev run), that symlink doesn't exist yet, so
+    # the lookup fails and the remount is dropped with no visible error.
+    # Fix: pass the actual block device path explicitly (known at
+    # install-time, threaded in as `part`) instead of relying on label
+    # resolution. Falls back to bare `/` if `part` wasn't provided, so this
+    # never regresses call sites that don't have it.
+    remount_target = part if part else ""
     with open(os.path.join(etc_runit, "1"), "w") as f:
         f.write(
             "#!/bin/sh\n"
             "mount -t proc proc /proc 2>/dev/null || true\n"
-            "mount -o remount,rw / 2>/dev/null || true\n"
+            f"mount -o remount,rw {remount_target} / 2>/dev/null || true\n"
             "mount -t sysfs sysfs /sys 2>/dev/null || true\n"
             "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n"
             "mount -t devpts devpts /dev/pts 2>/dev/null || true\n"
@@ -464,9 +478,22 @@ def install_init(choice):
             f.write("#!/bin/sh\nexec " + command + "\n")
         os.chmod(os.path.join(directory, "run"), 0o755)
 
+    # BUG FIX (2026-08-07): login always rejected the CORRECT root password
+    # ("Login incorrect" every time), even after confirming byte-for-byte
+    # that /etc/shadow's crypt() hash matched and getspnam() worked fine in
+    # isolation. Root cause: agetty is exec'd directly as a runsv service
+    # child (runsvdir -> runsv -> this run script), which is never a
+    # session leader with no controlling terminal of its own - agetty's own
+    # internal setsid()/TIOCSCTTY handling did not recover from that in
+    # this environment, so `login` (its child) never actually owned
+    # ttyS0/tty1 as a controlling terminal even though the prompt displayed
+    # fine. Confirmed live: wrapping the exact same agetty invocation in
+    # `setsid -c` (new session + explicitly claim the current tty as
+    # controlling) fixed authentication immediately with the unmodified
+    # password - proving this was a tty/session bug, never a password one.
     # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
-    write_service("agetty-tty1", "/sbin/agetty tty1 38400 linux")
-    write_service("agetty-ttyS0", "/sbin/agetty -L 115200 ttyS0 vt100")
+    write_service("agetty-tty1", "setsid -c /sbin/agetty tty1 38400 linux")
+    write_service("agetty-ttyS0", "setsid -c /sbin/agetty -L 115200 ttyS0 vt100")
 
     # runit is PID1; preserve SysVinit as a recovery binary.
     # NOTE: nixpkgs' runit derivation installs everything into $out/bin
@@ -523,7 +550,7 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
         if username:
             create_user(username, user_password or root_password)
         install_wm(profile.desktop)
-        install_init(profile.init)
+        install_init(profile.init, part)
         install_bootloader(disk, part)
     finally:
         cleanup_mounts()
