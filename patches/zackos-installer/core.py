@@ -998,9 +998,32 @@ def install_shutdown_wrappers():
         if os.path.exists(p) and not os.path.islink(p):
             shutil.copy2(p, p + ".sysvinit")
 
+    # BUG FIX (2026-08-09): poweroff hung indefinitely (observed live: still
+    # blocked 49+ seconds later, "kill: run: /etc/service/agetty-ttyS0: ...
+    # want down, got TERM"). Root cause: `poweroff` is normally typed
+    # interactively from the serial console, i.e. from a shell that is a
+    # session/process-tree DESCENDANT of the very agetty-ttyS0 the stop loop
+    # is trying to gracefully stop. `sv -w 5 force-stop` sends TERM, then
+    # (per runit semantics) is supposed to escalate to KILL after the
+    # timeout - but agetty's own SIGTERM handler tries to clean up/hang up
+    # the line and, on this exact self-referential case (the requesting
+    # shell is still alive underneath it, still holding the tty open),
+    # never actually completes, so runsv's supervisor sees it as still up
+    # indefinitely and the whole shutdown script blocks on that one line
+    # forever - never reaching sync/remount-ro/sysrq at all.
+    # Fix: getty services hold no state worth preserving before a raw
+    # poweroff (nothing writes through them) - use `sv kill` for them
+    # instead, which sends SIGKILL and returns immediately without
+    # waiting for the down state, so it can never self-deadlock against
+    # the caller's own controlling tty. Non-getty services (dhcpcd,
+    # udevd - anything that might be mid-write) keep the graceful
+    # TERM-then-wait-then-KILL via force-stop.
     stop_services = """for service in /etc/service/*; do
   [ -d "$service" ] || continue
-  /usr/local/bin/sv -w 5 force-stop "$service" 2>/dev/null || true
+  case "$(basename "$service")" in
+    agetty-*) /usr/local/bin/sv kill "$service" 2>/dev/null || true ;;
+    *) /usr/local/bin/sv -w 5 force-stop "$service" 2>/dev/null || true ;;
+  esac
 done
 sync
 mount -o remount,ro / 2>/dev/null || true
