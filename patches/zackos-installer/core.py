@@ -421,10 +421,36 @@ def install_wm(choice):
         "i3", "i3bar", "i3status", "xterm", "urxvt", "dmenu", "startx",
         "Xorg", "xauth", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
+    register_nix_fonts()
 
     write_xorg_conf()
     write_xinitrc()
     write_i3_config()
+
+
+def register_nix_fonts():
+    """Point the base LFS system's fontconfig at the Nix-installed fonts.
+
+    dejavu_fonts lands in the Nix profile at
+    /nix/var/nix/profiles/default/share/fonts, but /etc/fonts/fonts.conf
+    (shipped by the base LFS/BLFS fontconfig build) only scans
+    /usr/share/fonts and ~/.fonts. Confirmed live: dejavu_fonts installs
+    fine and i3's config references "DejaVu Sans Mono", but fc-list never
+    sees it, so i3bar/dmenu would render tofu boxes / fall back to a
+    default font instead of the requested DejaVu Sans Mono. Add an
+    explicit conf.d include for the Nix font dir and rebuild the cache.
+    """
+    conf_dir = os.path.join(TARGET, "etc/fonts/conf.d")
+    os.makedirs(conf_dir, exist_ok=True)
+    with open(os.path.join(conf_dir, "00-nix-fonts.conf"), "w") as f:
+        f.write(
+            '<?xml version="1.0"?>\n'
+            '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
+            '<fontconfig>\n'
+            '  <dir>/nix/var/nix/profiles/default/share/fonts</dir>\n'
+            '</fontconfig>\n'
+        )
+    chroot_run("fc-cache -f")
 
 
 def write_xorg_conf():
