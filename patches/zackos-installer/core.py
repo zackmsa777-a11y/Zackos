@@ -191,6 +191,16 @@ def chroot_run(cmd):
     for src, dst in (("/proc", "proc"), ("/sys", "sys"), ("/dev", "dev")):
         dst_path = os.path.join(TARGET, dst)
         run(f"mount --bind {src} {dst_path}", check=False)
+    # BUG FIX (2026-08-08): `mount --bind /dev target/dev` only binds that
+    # single mountpoint - it does NOT carry across /dev/pts, which is its
+    # own separate devpts mount on the live system. Any chroot_run that
+    # allocates a pty (nix-env's own progress/substituter multiplexing
+    # does this for every package it fetches) then fails with "opening
+    # pseudoterminal master: No such device", which install_wm()'s retry
+    # loop dutifully retried 3 times and then correctly hard-failed on -
+    # but the real fix is just giving the chroot a working /dev/pts.
+    os.makedirs(os.path.join(TARGET, "dev/pts"), exist_ok=True)
+    run(f"mount --bind /dev/pts {os.path.join(TARGET, 'dev/pts')}", check=False)
     # BUG FIX (2026-08-05): the copied base system's /etc/resolv.conf is
     # whatever existed at tar-copy time -- often stale/empty, since dhcpcd
     # writes the live resolv.conf asynchronously. Any chroot_run that needs
@@ -874,7 +884,7 @@ esac
 
 
 def cleanup_mounts():
-    for d in ("dev", "sys", "proc"):
+    for d in ("dev/pts", "dev", "sys", "proc"):
         run(f"umount -lf {TARGET}/{d}", check=False)
     run(f"umount -lf {TARGET}", check=False)
 
