@@ -25,6 +25,35 @@ def log(msg):
     print(f"\033[1;36m==>\033[0m {msg}", flush=True)
 
 
+def wait_for_network(host="cache.nixos.org", attempts=15, delay=2):
+    """Block until DNS resolution for `host` succeeds, or give up.
+
+    BUG FIX (2026-08-08): install_wm() called nix-env immediately after
+    boot, with no wait for dhcpcd to actually finish negotiating a lease
+    and writing /etc/resolv.conf. Reproduced live: nix-env's fetch failed
+    silently with "Could not resolve hostname", link_nix_bins() then found
+    nothing in the Nix store and (since desktop packages were only ever
+    treated as "optional") logged a one-line warning and let the install
+    continue as if nothing was wrong - the user got a fully "successful"
+    install with no i3, no Xorg, no xterm at all. Give the network time to
+    come up and confirm DNS actually resolves before ever trying to fetch
+    packages, so real failures surface as a real error instead of a silent
+    no-op.
+    """
+    import socket
+    for attempt in range(1, attempts + 1):
+        try:
+            socket.getaddrinfo(host, 443)
+            return True
+        except socket.gaierror:
+            log(f"Waiting for network/DNS to be ready ({attempt}/{attempts})...")
+            import time
+            time.sleep(delay)
+    log(f"WARNING: network/DNS never became ready (tried to resolve {host}); "
+        "package installs will likely fail.")
+    return False
+
+
 def run(cmd, check=True, input_text=None, capture=False):
     """Run a shell command, echoing it first (manual-mode transparency)."""
     if isinstance(cmd, list):
@@ -323,20 +352,242 @@ def install_wm(choice):
     if choice == "none":
         log("Skipping WM install (console-only system).")
         return
-    log("Installing i3-wm + xterm + dmenu via Nix (needs network access)...")
+
+    # BUG FIX (2026-08-08): this whole function used to be "best effort" -
+    # link_nix_bins() was called with require_all=False (its default), so
+    # if the nix-env fetch below failed for ANY reason (most commonly: the
+    # transient DHCP/DNS race described in wait_for_network()'s docstring),
+    # the installer printed one easy-to-miss "Optional provider binaries
+    # unavailable" line and then reported "Install complete!" anyway.
+    # Reproduced live end-to-end: user got a fully installed, "successful"
+    # system with no i3, no Xorg, no xterm, no dmenu at all - not even a
+    # bad config, the packages were simply never there. The WM the user
+    # explicitly chose is not optional; fail loudly instead.
+    wait_for_network()
+    log("Installing i3-wm + Xorg + input/session deps via Nix "
+        "(needs network access)...")
     export = (
         f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
         f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; "
     )
-    chroot_run(export + "nix-env -iA nixpkgs.i3 nixpkgs.xterm nixpkgs.dmenu nixpkgs.xorg.xorgserver nixpkgs.xorg.xinit")
-    link_nix_bins(["i3", "i3bar", "i3status", "xterm", "dmenu", "startx", "Xorg"])
-    xinitrc = os.path.join(TARGET, "etc/skel/.xinitrc")
-    os.makedirs(os.path.dirname(xinitrc), exist_ok=True)
-    with open(xinitrc, "w") as f:
-        f.write("#!/bin/sh\nexec i3\n")
-    os.chmod(xinitrc, 0o755)
-    root_xinitrc = os.path.join(TARGET, "root/.xinitrc")
-    shutil.copy(xinitrc, root_xinitrc)
+    # Full package set the shipped xorg.conf / .xinitrc / i3 config below
+    # actually depend on - not just the 5 packages that were being
+    # installed before while the config referenced far more (i3status,
+    # dmenu, a real video driver + its vbe/int10/shadow helper modules,
+    # libinput, dbus, a font so i3bar/dmenu don't render tofu boxes, and
+    # eudev so libinput has a live device database instead of failing
+    # with "udev device never initialized").
+    # NOTE: no eudev/dbus here - scripts_chroot/udev.sh and
+    # blfs-69-dbus.sh already build real udevd + dbus-daemon into /usr as
+    # part of the base LFS/BLFS system. Pulling a second copy from nix
+    # would be redundant and risks two udev daemons fighting over /run/udev.
+    packages = [
+        "nixpkgs.i3", "nixpkgs.i3status", "nixpkgs.dmenu", "nixpkgs.xterm",
+        "nixpkgs.rxvt-unicode",
+        "nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
+        "nixpkgs.xf86-video-vesa", "nixpkgs.xf86-input-libinput",
+        "nixpkgs.dejavu_fonts",
+        "nixpkgs.feh", "nixpkgs.scrot", "nixpkgs.xdotool", "nixpkgs.xclip",
+        "nixpkgs.i3lock",
+    ]
+    ok = False
+    for attempt in range(1, 4):
+        result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA "
+                             + " ".join(packages))
+        if result.returncode == 0:
+            ok = True
+            break
+        log(f"nix-env install attempt {attempt}/3 failed, retrying...")
+    if not ok:
+        raise InstallError(
+            "Failed to install the i3/Xorg package set after 3 attempts - "
+            "check network connectivity inside the chroot (see wait_for_network)."
+        )
+    # These are the packages the config files below actually invoke; if
+    # any are missing the WM will render but be broken (no cursor, no
+    # bar, tofu boxes), so require every one of them instead of quietly
+    # continuing like the old "optional" path did.
+    link_nix_bins([
+        "i3", "i3bar", "i3status", "xterm", "urxvt", "dmenu", "startx",
+        "Xorg", "xauth", "i3lock", "feh", "scrot", "xdotool", "xclip",
+    ], require_all=True)
+
+    write_xorg_conf()
+    write_xinitrc()
+    write_i3_config()
+
+
+def write_xorg_conf():
+    """Ship a video config that actually starts on real/virtual hardware
+    with no KMS/DRM (this kernel has no vboxvideo/bochs-drm compiled in).
+
+    BUG FIX (2026-08-08): the installed target shipped with NO
+    /etc/X11/xorg.conf at all - the one reference config that existed in
+    this repo (patches/etc-configs/xorg.conf) was never actually copied
+    anywhere by build_installer_iso.sh. Xorg's pure autoconfig then found
+    no usable KMS device and died with "no screens found" on every fresh
+    install. Confirmed live: explicitly loading vesa + its vbe/int10/
+    shadow helper modules (vesa needs all three - it fails with a
+    different "undefined symbol" for each one missing) is what actually
+    gets a screen up in both QEMU and VirtualBox with this kernel.
+    Deliberately no InputDevice/ServerFlags section here: AutoAddDevices
+    stays at its default (on) so Xorg's libinput driver picks up mouse
+    and keyboard automatically via udev - hardcoding /dev/input/eventN or
+    the legacy /dev/input/mice path was the single biggest time-sink in
+    manual live debugging (both are guesses that silently break the
+    moment the device enumeration order differs).
+    """
+    xorg_conf = os.path.join(TARGET, "etc/X11/xorg.conf")
+    os.makedirs(os.path.dirname(xorg_conf), exist_ok=True)
+    with open(xorg_conf, "w") as f:
+        f.write(
+            "Section \"Module\"\n"
+            "    Load \"vbe\"\n"
+            "    Load \"int10\"\n"
+            "    Load \"shadow\"\n"
+            "EndSection\n\n"
+            "Section \"Device\"\n"
+            "    Identifier \"Generic Video Driver\"\n"
+            "    Driver \"vesa\"\n"
+            "EndSection\n\n"
+            "Section \"Screen\"\n"
+            "    Identifier \"Screen0\"\n"
+            "    Device \"Generic Video Driver\"\n"
+            "EndSection\n\n"
+            "Section \"ServerLayout\"\n"
+            "    Identifier \"Default Layout\"\n"
+            "    Screen 0 \"Screen0\" 0 0\n"
+            "EndSection\n"
+        )
+
+
+def write_xinitrc():
+    """.xinitrc must launch i3 inside a D-Bus session.
+
+    BUG FIX (2026-08-08): the old .xinitrc was a bare `exec i3` with no
+    D-Bus session at all. Reproduced live: nm-applet/dconf/notifications
+    all failed with "DBUS_SESSION_BUS_ADDRESS is blank" and i3's own
+    exit/lock menu tools that shell out to notify-send silently no-op'd.
+    dbus-launch --exit-with-x11 starts a session bus and tears it down
+    when i3 exits, with zero extra service wiring needed.
+    """
+    content = "#!/bin/sh\nexec dbus-launch --exit-with-x11 i3\n"
+    for rel in ("etc/skel/.xinitrc", "root/.xinitrc"):
+        path = os.path.join(TARGET, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+        os.chmod(path, 0o755)
+
+
+def write_i3_config():
+    """Ship a real i3 config (adapted from github.com/TxGVNN/i3-config,
+    per project standing instructions) instead of leaving ~/.config/i3
+    empty.
+
+    BUG FIX (2026-08-08): with no config file present, i3 shows its
+    first-run setup wizard every single launch instead of a normal
+    session - confirmed live as the unreadable "unreadable dialog box"
+    the user kept hitting. The upstream TxGVNN config also hardcodes
+    `i3bar_command /usr/bin/i3bar` (nix packages never install to
+    /usr/bin - confirmed live: i3bar/child.c reported binary not found
+    at that literal path even though it was on $PATH) and calls
+    `systemctl poweroff/reboot/suspend/hibernate`, which do not exist on
+    this runit-based, non-systemd system. Adapted here: i3bar resolved
+    via $PATH, i3status instead of the upstream's i3blocks (avoids
+    needing a second custom config file this installer doesn't ship),
+    power/reboot routed through this project's own /sbin/poweroff and
+    /sbin/reboot wrappers (see install_shutdown_wrappers()), and
+    suspend/hibernate dropped (no ACPI sleep support in this build).
+    """
+    config = """# ZackOS i3 config - adapted from github.com/TxGVNN/i3-config
+set $mod Mod4
+
+font pango:DejaVu Sans Mono 10
+floating_modifier $mod
+focus_follows_mouse no
+
+# terminal / launcher
+bindsym $mod+Return exec urxvt
+bindsym $mod+Shift+d exec dmenu_run
+bindsym $mod+Shift+q kill
+bindsym $mod+x border toggle
+
+# focus (vim-style + arrows)
+bindsym $mod+j focus left
+bindsym $mod+k focus down
+bindsym $mod+l focus up
+bindsym $mod+semicolon focus right
+bindsym $mod+Left focus left
+bindsym $mod+Down focus down
+bindsym $mod+Up focus up
+bindsym $mod+Right focus right
+
+# move
+bindsym $mod+Shift+j move left
+bindsym $mod+Shift+k move down
+bindsym $mod+Shift+l move up
+bindsym $mod+Shift+semicolon move right
+
+# layout
+bindsym $mod+h split h
+bindsym $mod+v split v
+bindsym $mod+f fullscreen toggle
+bindsym $mod+s layout stacking
+bindsym $mod+w layout tabbed
+bindsym $mod+e layout toggle split
+bindsym $mod+Shift+space floating toggle
+bindsym $mod+space focus mode_toggle
+bindsym $mod+a focus parent
+
+# workspaces
+bindsym $mod+1 workspace number 1
+bindsym $mod+2 workspace number 2
+bindsym $mod+3 workspace number 3
+bindsym $mod+4 workspace number 4
+bindsym $mod+5 workspace number 5
+bindsym $mod+Shift+1 move container to workspace number 1
+bindsym $mod+Shift+2 move container to workspace number 2
+bindsym $mod+Shift+3 move container to workspace number 3
+bindsym $mod+Shift+4 move container to workspace number 4
+bindsym $mod+Shift+5 move container to workspace number 5
+
+# resize mode
+mode "resize" {
+    bindsym j resize shrink width 5 px or 5 ppt
+    bindsym k resize grow height 5 px or 5 ppt
+    bindsym l resize shrink height 5 px or 5 ppt
+    bindsym semicolon resize grow width 5 px or 5 ppt
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+
+# power menu - routed through our own runit-safe wrappers, no systemd
+mode "(l)ock (r)eboot (p)oweroff (e)xit-i3" {
+    bindsym l exec i3lock -c 2E3440, mode "default"
+    bindsym r exec /sbin/reboot
+    bindsym p exec /sbin/poweroff
+    bindsym e exec i3-msg exit
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+Shift+e mode "(l)ock (r)eboot (p)oweroff (e)xit-i3"
+
+bindsym $mod+Shift+c reload
+bindsym $mod+Shift+r restart
+
+bar {
+    i3bar_command i3bar
+    status_command i3status
+    font pango:DejaVu Sans Mono 10
+}
+"""
+    for rel in ("etc/skel/.config/i3/config", "root/.config/i3/config"):
+        path = os.path.join(TARGET, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(config)
 
 
 def link_nix_bins(names, require_all=False):
@@ -457,8 +708,52 @@ def install_init(choice, part=None):
     # not exist" while the service's run script was present and executable.
     # Export PATH explicitly so runsvdir's children can resolve.
     runit_path_export = "export PATH=/usr/local/bin:/usr/local/sbin:/bin:/sbin:/usr/bin:/usr/sbin\n"
+    # BUG FIX (2026-08-08): mouse/keyboard never worked under X on this
+    # target - root cause was that udevd was NEVER STARTED AT ALL under
+    # runit. The base LFS/BLFS build already compiles a real udev (see
+    # scripts_chroot/udev.sh -> /usr/sbin/udevd, symlinked from the
+    # udevadm multi-call binary per the upstream LFS book convention -
+    # invoking it under that name activates persistent daemon mode
+    # instead of the one-shot CLI tool), but SysVinit's own udev
+    # bootscript is what starts it normally, and switching init to runit
+    # here never carried that step over. Confirmed live: without a
+    # running udevd, Xorg's libinput driver logs "udev device never
+    # initialized" and neither mouse nor keyboard produce any input,
+    # regardless of which xorg.conf is in place. Start it once, backgrounded,
+    # before runsvdir takes over, then let udevadm populate the initial
+    # device set so it is ready before any X session is later launched
+    # from a login shell.
+    stage2_lines = (
+        "#!/bin/sh\n"
+        + runit_path_export
+        + "if [ -x /usr/sbin/udevd ]; then\n"
+        "  /usr/sbin/udevd --daemon 2>/dev/null &\n"
+        "  udevadm trigger 2>/dev/null || true\n"
+        "  udevadm settle --timeout=10 2>/dev/null || true\n"
+        "fi\n"
+        "exec /usr/local/bin/runsvdir -P /etc/service\n"
+    )
     with open(os.path.join(etc_runit, "2"), "w") as f:
-        f.write("#!/bin/sh\n" + runit_path_export + "exec /usr/local/bin/runsvdir -P /etc/service\n")
+        f.write(stage2_lines)
+    # BUG FIX (2026-08-08): plain `reboot`/`poweroff`/`shutdown` (no -f)
+    # hung forever, forcing hard VirtualBox resets - which in turn
+    # corrupted /etc/shadow writes badly enough that login then rejected
+    # the correct password on every subsequent boot ("Login incorrect"
+    # even with byte-identical credentials). Root cause: the reboot/halt/
+    # poweroff/shutdown binaries on this system are SysVinit's own
+    # (built expecting to write a runlevel request to /run/initctl and
+    # have SysVinit's PID1 read and act on it) - but PID1 here is runit,
+    # which never creates or reads that fifo, so those commands just
+    # blocked waiting for a response that will never come. Stage 3 itself
+    # only stopped services and returned - it never performed the actual
+    # power action either. Fixed properly in install_shutdown_wrappers():
+    # /sbin/reboot, /sbin/halt, /sbin/poweroff, /sbin/shutdown are
+    # replaced with tiny scripts that stop services, sync, remount root
+    # read-only, then trigger the kernel directly via
+    # /proc/sysrq-trigger - no init IPC protocol involved at all, so it
+    # cannot hang regardless of which init is PID1. Stage 3 (still run via
+    # those wrappers) keeps the service force-stop loop and adds an
+    # explicit sync as defense in depth.
     with open(os.path.join(etc_runit, "3"), "w") as f:
         f.write(
             "#!/bin/sh\n"
@@ -467,6 +762,7 @@ def install_init(choice, part=None):
             "  [ -d \"$service\" ] || continue\n"
             "  /usr/local/bin/sv -w 5 force-stop \"$service\" 2>/dev/null || true\n"
             "done\n"
+            "sync\n"
         )
     for fname in ("1", "2", "3"):
         os.chmod(os.path.join(etc_runit, fname), 0o755)
@@ -522,6 +818,59 @@ def install_init(choice, part=None):
     with open(sbin_init, "w") as f:
         f.write(f"#!/bin/sh\nexec {runit_bin}\n")
     os.chmod(sbin_init, 0o755)
+
+    install_shutdown_wrappers()
+
+
+def install_shutdown_wrappers():
+    """Replace /sbin/{reboot,halt,poweroff,shutdown} with init-agnostic
+    scripts so they work under runit (see the stage-3 bug-fix note above
+    for the full root cause). Backs up whatever SysVinit-provided binary
+    was there first, matching the existing /sbin/init.sysvinit convention.
+    """
+    sbin = os.path.join(TARGET, "sbin")
+    os.makedirs(sbin, exist_ok=True)
+
+    def _backup(name):
+        p = os.path.join(sbin, name)
+        if os.path.exists(p) and not os.path.islink(p):
+            shutil.copy2(p, p + ".sysvinit")
+
+    stop_services = """for service in /etc/service/*; do
+  [ -d "$service" ] || continue
+  /usr/local/bin/sv -w 5 force-stop "$service" 2>/dev/null || true
+done
+sync
+mount -o remount,ro / 2>/dev/null || true
+echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
+"""
+
+    def _write(name, sysrq_char):
+        _backup(name)
+        p = os.path.join(sbin, name)
+        with open(p, "w") as f:
+            f.write("#!/bin/sh\n" + stop_services +
+                    f"echo {sysrq_char} > /proc/sysrq-trigger\n")
+        os.chmod(p, 0o755)
+
+    _write("reboot", "b")     # SysRq b = immediate reboot
+    _write("poweroff", "o")   # SysRq o = power off
+    _write("halt", "o")       # no separate "halt and don't power off" via
+                              # sysrq; poweroff is the closest safe stop.
+
+    shutdown_path = os.path.join(sbin, "shutdown")
+    _backup("shutdown")
+    with open(shutdown_path, "w") as f:
+        f.write("""#!/bin/sh
+# Minimal init-agnostic shutdown(8): only cares whether -r (reboot) was
+# requested; everything else (delay, -h, -P, 'now', etc.) is accepted and
+# ignored since this system has no multi-user warning/wall step to perform.
+case " $* " in
+  *' -r '*) exec /sbin/reboot ;;
+  *) exec /sbin/poweroff ;;
+esac
+""")
+    os.chmod(shutdown_path, 0o755)
 
 
 def cleanup_mounts():
