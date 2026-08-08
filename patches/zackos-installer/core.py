@@ -380,13 +380,19 @@ def install_wm(choice):
         f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
         f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; "
     )
-    # Full package set the shipped xorg.conf / .xinitrc / i3 config below
-    # actually depend on - not just the 5 packages that were being
-    # installed before while the config referenced far more (i3status,
-    # dmenu, a real video driver + its vbe/int10/shadow helper modules,
-    # libinput, dbus, a font so i3bar/dmenu don't render tofu boxes, and
-    # eudev so libinput has a live device database instead of failing
-    # with "udev device never initialized").
+    # Full package set the shipped .xinitrc / i3 config below actually
+    # depend on - not just the 5 packages that were being installed
+    # before while the config referenced far more (i3status, dmenu,
+    # mesa for glamor/GL accel behind the built-in "modesetting" KMS
+    # driver, libinput, dbus, a font so i3bar/dmenu don't render tofu
+    # boxes, and eudev so libinput has a live device database instead of
+    # failing with "udev device never initialized"). No xf86-video-vesa:
+    # confirmed the shipped kernel config has CONFIG_DRM_I915=y (real
+    # hardware) and CONFIG_DRM_BOCHS=y (QEMU std VGA) - xorg-server 1.18+
+    # bundles the "modesetting" DDX driver internally and autodetects
+    # via KMS/udev exactly like Fedora/Arch/Ubuntu, same as no distro
+    # ships a hand-written xorg.conf video Section anymore. vesa is
+    # VBE/INT10-only and doesn't even exist as a code path on UEFI boots.
     # NOTE: no eudev/dbus here - scripts_chroot/udev.sh and
     # blfs-69-dbus.sh already build real udevd + dbus-daemon into /usr as
     # part of the base LFS/BLFS system. Pulling a second copy from nix
@@ -395,7 +401,7 @@ def install_wm(choice):
         "nixpkgs.i3", "nixpkgs.i3status", "nixpkgs.dmenu", "nixpkgs.xterm",
         "nixpkgs.rxvt-unicode",
         "nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
-        "nixpkgs.xf86-video-vesa", "nixpkgs.xf86-input-libinput",
+        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa",
         "nixpkgs.dejavu_fonts",
         "nixpkgs.feh", "nixpkgs.scrot", "nixpkgs.xdotool", "nixpkgs.xclip",
         "nixpkgs.i3lock",
@@ -454,45 +460,83 @@ def register_nix_fonts():
 
 
 def write_xorg_conf():
-    """Ship a video config that actually starts on real/virtual hardware
-    with no KMS/DRM (this kernel has no vboxvideo/bochs-drm compiled in).
+    """Let Xorg autodetect video + input, the same way Fedora/Arch/Ubuntu
+    do it, instead of a hand-written video Driver section.
 
-    BUG FIX (2026-08-08): the installed target shipped with NO
-    /etc/X11/xorg.conf at all - the one reference config that existed in
-    this repo (patches/etc-configs/xorg.conf) was never actually copied
-    anywhere by build_installer_iso.sh. Xorg's pure autoconfig then found
-    no usable KMS device and died with "no screens found" on every fresh
-    install. Confirmed live: explicitly loading vesa + its vbe/int10/
-    shadow helper modules (vesa needs all three - it fails with a
-    different "undefined symbol" for each one missing) is what actually
-    gets a screen up in both QEMU and VirtualBox with this kernel.
-    Deliberately no InputDevice/ServerFlags section here: AutoAddDevices
-    stays at its default (on) so Xorg's libinput driver picks up mouse
-    and keyboard automatically via udev - hardcoding /dev/input/eventN or
-    the legacy /dev/input/mice path was the single biggest time-sink in
-    manual live debugging (both are guesses that silently break the
-    moment the device enumeration order differs).
+    HISTORY: the previous version of this function hardcoded the legacy
+    "vesa" driver + its vbe/int10/shadow helper modules, because at the
+    time /etc/X11/xorg.conf didn't exist at all and Xorg's autoconfig
+    found no usable KMS device. Root cause turned out to be the missing
+    config file, not a missing KMS driver - the kernel config here
+    already has CONFIG_DRM_I915=y (real hardware, e.g. the ThinkPad
+    T450's Broadwell iGPU) and CONFIG_DRM_BOCHS=y (QEMU's default std
+    VGA), so xorg-server's built-in "modesetting" DDX driver (bundled
+    since xorg-server 1.18, no separate xf86-video-* package needed)
+    binds to /dev/dri/card0 with zero video configuration - exactly how
+    every mainstream distro does it now; none of them ship a video
+    Driver section anymore. vesa is VBE/INT10-only and doesn't even have
+    a code path on UEFI boots, so it was never going to work on the
+    T450 (or older cache.nixos.org's ARM ISOs) once real hardware in
+    mind, and it's actively a regression vs. modesetting on QEMU too.
+    Only two small conf.d drop-ins are needed, matching upstream package
+    defaults: one for input (xf86-input-libinput's own
+    /usr/share/X11/xorg.conf.d/40-libinput.conf) and one quirks file
+    (xorg-server's own 10-quirks.conf, which blacklists the ThinkPad's
+    HDAPS accelerometer node so it isn't misdetected as a pointer -
+    directly relevant since this ships on the user's own ThinkPad T450).
     """
+    # Remove any stale monolithic xorg.conf from a previous install/image
+    # so it can't override the KMS autodetect - Xorg reads
+    # /etc/X11/xorg.conf before xorg.conf.d if both exist.
     xorg_conf = os.path.join(TARGET, "etc/X11/xorg.conf")
-    os.makedirs(os.path.dirname(xorg_conf), exist_ok=True)
-    with open(xorg_conf, "w") as f:
+    if os.path.exists(xorg_conf) or os.path.islink(xorg_conf):
+        os.remove(xorg_conf)
+
+    conf_d = os.path.join(TARGET, "usr/share/X11/xorg.conf.d")
+    os.makedirs(conf_d, exist_ok=True)
+
+    with open(os.path.join(conf_d, "10-quirks.conf"), "w") as f:
         f.write(
-            "Section \"Module\"\n"
-            "    Load \"vbe\"\n"
-            "    Load \"int10\"\n"
-            "    Load \"shadow\"\n"
+            "Section \"InputClass\"\n"
+            "    Identifier \"ThinkPad HDAPS accelerometer blacklist\"\n"
+            "    MatchProduct \"ThinkPad HDAPS accelerometer data\"\n"
+            "    Option \"Ignore\" \"on\"\n"
+            "EndSection\n"
+        )
+
+    with open(os.path.join(conf_d, "40-libinput.conf"), "w") as f:
+        f.write(
+            "Section \"InputClass\"\n"
+            "    Identifier \"libinput pointer catchall\"\n"
+            "    MatchIsPointer \"on\"\n"
+            "    MatchDevicePath \"/dev/input/event*\"\n"
+            "    Driver \"libinput\"\n"
             "EndSection\n\n"
-            "Section \"Device\"\n"
-            "    Identifier \"Generic Video Driver\"\n"
-            "    Driver \"vesa\"\n"
+            "Section \"InputClass\"\n"
+            "    Identifier \"libinput keyboard catchall\"\n"
+            "    MatchIsKeyboard \"on\"\n"
+            "    MatchDevicePath \"/dev/input/event*\"\n"
+            "    Driver \"libinput\"\n"
             "EndSection\n\n"
-            "Section \"Screen\"\n"
-            "    Identifier \"Screen0\"\n"
-            "    Device \"Generic Video Driver\"\n"
+            "Section \"InputClass\"\n"
+            "    Identifier \"libinput touchpad catchall\"\n"
+            "    MatchIsTouchpad \"on\"\n"
+            "    MatchDevicePath \"/dev/input/event*\"\n"
+            "    Driver \"libinput\"\n"
+            "    Option \"Tapping\" \"on\"\n"
+            "    Option \"NaturalScrolling\" \"true\"\n"
             "EndSection\n\n"
-            "Section \"ServerLayout\"\n"
-            "    Identifier \"Default Layout\"\n"
-            "    Screen 0 \"Screen0\" 0 0\n"
+            "Section \"InputClass\"\n"
+            "    Identifier \"libinput touchscreen catchall\"\n"
+            "    MatchIsTouchscreen \"on\"\n"
+            "    MatchDevicePath \"/dev/input/event*\"\n"
+            "    Driver \"libinput\"\n"
+            "EndSection\n\n"
+            "Section \"InputClass\"\n"
+            "    Identifier \"libinput tablet catchall\"\n"
+            "    MatchIsTablet \"on\"\n"
+            "    MatchDevicePath \"/dev/input/event*\"\n"
+            "    Driver \"libinput\"\n"
             "EndSection\n"
         )
 
@@ -773,6 +817,16 @@ def install_init(choice, part=None):
     # before runsvdir takes over, then let udevadm populate the initial
     # device set so it is ready before any X session is later launched
     # from a login shell.
+    #
+    # VOID-STYLE HANDOFF (added after auditing how Void Linux's own
+    # void-runit stage 2 works): Void starts udevd the same way during
+    # its stage 1 core-services, then hands it to real supervision via a
+    # dedicated /etc/sv/udevd/run script that does
+    # "udevadm control --exit" (stops this bootstrap instance) followed
+    # by "exec udevd" (a fresh, supervised instance runsv can restart if
+    # it ever dies). Adopted verbatim below - this ad-hoc bring-up here
+    # stays exactly as before for early device population, but is no
+    # longer the ONLY thing running udevd for the life of the system.
     stage2_lines = (
         "#!/bin/sh\n"
         + runit_path_export
@@ -817,12 +871,50 @@ def install_init(choice, part=None):
     for fname in ("1", "2", "3"):
         os.chmod(os.path.join(etc_runit, fname), 0o755)
 
-    def write_service(name, command):
-        directory = os.path.join(service_dir, name)
-        os.makedirs(directory, exist_ok=True)
-        with open(os.path.join(directory, "run"), "w") as f:
-            f.write("#!/bin/sh\nexec " + command + "\n")
-        os.chmod(os.path.join(directory, "run"), 0o755)
+    # VOID-STYLE SERVICE LAYOUT (adopted after auditing Void Linux's own
+    # runit conventions, which every real-world runit deployment follows):
+    # service *definitions* live as templates under /etc/sv/<name>/, and
+    # the live tree runsvdir actually supervises (/etc/service) is just a
+    # symlink farm pointing back at those templates - "ln -s /etc/sv/x
+    # /etc/service/x". This replaces writing services directly into
+    # /etc/service, which worked but mixed "template" and "live state"
+    # in one place; Void keeps them separate so a service can be
+    # disabled by removing one symlink without losing its definition,
+    # and multiple live services (agetty-tty1/agetty-ttyS0) can share one
+    # template (agetty-generic) via their own "run" symlink + per-service
+    # "conf" file, exactly like Void does for its getty services.
+    sv_dir = os.path.join(TARGET, "etc/sv")
+    os.makedirs(sv_dir, exist_ok=True)
+
+    def write_service(name, command, log=False):
+        """Write a service template under /etc/sv/<name>/run and symlink
+        it live into /etc/service/<name>. Optional svlogd-backed logging
+        (Void's "./log/run" convention) when log=True.
+        """
+        template_dir = os.path.join(sv_dir, name)
+        os.makedirs(template_dir, exist_ok=True)
+        with open(os.path.join(template_dir, "run"), "w") as f:
+            f.write("#!/bin/sh\nexec 2>&1\nexec " + command + "\n")
+        os.chmod(os.path.join(template_dir, "run"), 0o755)
+        if log:
+            log_dir = os.path.join(template_dir, "log")
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "run"), "w") as f:
+                f.write(
+                    "#!/bin/sh\n"
+                    "exec 2>&1\n"
+                    f"[ -d /var/log/{name} ] || install -m755 -d /var/log/{name}\n"
+                    f"exec /usr/local/bin/svlogd -tt /var/log/{name}\n"
+                )
+            os.chmod(os.path.join(log_dir, "run"), 0o755)
+        link_path = os.path.join(service_dir, name)
+        if os.path.islink(link_path):
+            os.remove(link_path)
+        elif os.path.isdir(link_path):
+            shutil.rmtree(link_path)
+        elif os.path.exists(link_path):
+            os.remove(link_path)
+        os.symlink(os.path.join("..", "sv", name), link_path)
 
     # BUG FIX (2026-08-07): login always rejected the CORRECT root password
     # ("Login incorrect" every time), even after confirming byte-for-byte
@@ -840,6 +932,26 @@ def install_init(choice, part=None):
     # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
     write_service("agetty-tty1", "setsid -c /sbin/agetty tty1 38400 linux")
     write_service("agetty-ttyS0", "setsid -c /sbin/agetty -L 115200 ttyS0 vt100")
+
+    # VOID-STYLE ADDITIONS: two services Void supervises for real that
+    # this system previously only ever ran ad-hoc (udevd, backgrounded in
+    # stage 2, never restarted if it died) or not at all (dhcpcd - network
+    # on the INSTALLED target never came up on its own; every prior test
+    # session had to hand-configure "ip addr add 10.0.2.15/24 ..." after
+    # every single boot). Both adapted directly from Void's own
+    # srcpkgs/*/files/*/run templates.
+    write_service(
+        "udevd",
+        'sh -c \'udevadm control --exit 2>/dev/null; exec /usr/sbin/udevd\''
+    )
+    # dhcpcd ships at /usr/local/sbin/dhcpcd (symlinked from the Nix store
+    # path by build_installer_iso.sh's live-boot dhcpcd step) and survives
+    # into the installed target because copy_system() copies /nix and
+    # /usr/local wholesale. "-B" keeps it in the foreground (required for
+    # a runit run script - runsv supervises the foreground process
+    # directly, it does not track a forked-off child), matching Void's
+    # own dhcpcd run script.
+    write_service("dhcpcd", "/usr/local/sbin/dhcpcd -B", log=True)
 
     # runit is PID1; preserve SysVinit as a recovery binary.
     # NOTE: nixpkgs' runit derivation installs everything into $out/bin
