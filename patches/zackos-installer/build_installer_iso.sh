@@ -4,7 +4,7 @@
 # everything from GitHub + the v4.2 release, no manual steps needed.
 set -e
 WORK=/app/installer_work
-REPO_URL="https://github.com/zackmsa777-a11y/lfs-12.4-from-scratch"
+REPO_URL="https://github.com/zackmsa777-a11y/Zackos"
 GH_TOKEN="${GITHUB_TOKEN}"
 
 echo "=== [1/8] apt/tooling ==="
@@ -17,14 +17,14 @@ cd "$WORK"
 
 echo "=== [2/8] fetch installer source from GitHub checkpoint ==="
 rm -rf gh_repo
-git clone -q "https://zackmsa777-a11y:${GH_TOKEN}@github.com/zackmsa777-a11y/lfs-12.4-from-scratch.git" gh_repo
+git clone -q "https://zackmsa777-a11y:${GH_TOKEN}@github.com/zackmsa777-a11y/Zackos.git" gh_repo
 INSTALLER_SRC="$WORK/gh_repo/patches/zackos-installer"
 test -f "$INSTALLER_SRC/core.py" || { echo "FATAL: installer source missing from GitHub checkpoint"; exit 1; }
 
 echo "=== [3/8] fetch v4.2 base ISO (skip if already present+verified) ==="
 if [ ! -f zackos_v42.iso ] || [ "$(md5sum zackos_v42.iso 2>/dev/null | awk '{print $1}')" != "01ce19d3e421f53f7212c0759a1d9176" ]; then
   for p in part00 part01 part02; do
-    curl -sL -o zackos_v42_$p "https://github.com/zackmsa777-a11y/lfs-12.4-from-scratch/releases/download/v4.2-live-cleaned-iso/zackos_v42_$p" &
+    curl -sL -o zackos_v42_$p "https://github.com/zackmsa777-a11y/Zackos/releases/download/v4.2-live-cleaned-iso/zackos_v42_$p" &
   done
   wait
   cat zackos_v42_part00 zackos_v42_part01 zackos_v42_part02 > zackos_v42.iso
