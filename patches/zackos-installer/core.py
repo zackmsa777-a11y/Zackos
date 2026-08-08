@@ -606,6 +606,20 @@ def link_nix_bins(names, require_all=False):
     runit installs its PID1/stage binary as ``sbin/runit`` on some Nix
     revisions, while runsvdir/sv may live in ``bin``.  Looking in only one
     directory was the cause of the old ``/sbin/init`` service failure.
+
+    BUG FIX (2026-08-08): crashed with FileExistsError the moment two
+    different store paths both ship the same binary name (e.g. the
+    wrapped ``rxvt-unicode`` derivation and the underlying
+    ``rxvt-unicode-unwrapped`` one both have a bin/urxvt - completely
+    normal in nixpkgs). The pre-existence guard here used
+    os.path.exists(), which FOLLOWS the symlink through the live host's
+    root, not through TARGET/'s root - so a link that's already correctly
+    in place (and perfectly resolvable once this disk is actually
+    chrooted/booted into) can still read back as "doesn't exist" from the
+    host's point of view, and the subsequent os.symlink() call then fails
+    on the literal symlink file already sitting there. lexists() checks
+    only whether the link itself is present, never dereferencing it, which
+    is the only correct test for "did we already create this one".
     """
     nix_store = os.path.join(TARGET, "nix/store")
     if not os.path.isdir(nix_store):
@@ -626,7 +640,7 @@ def link_nix_bins(names, require_all=False):
                 candidate = os.path.join(source_dir, name)
                 if os.path.isfile(candidate) or os.path.islink(candidate):
                     link_path = os.path.join(destination, name)
-                    if not os.path.exists(link_path):
+                    if not os.path.lexists(link_path):
                         os.symlink(f"/nix/store/{entry}/{subdir}/{name}", link_path)
                     found.add(name)
     missing = sorted(set(names) - found)
