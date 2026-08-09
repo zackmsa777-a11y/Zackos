@@ -7,21 +7,21 @@ WORK=/app/installer_work
 REPO_URL="https://github.com/zackmsa777-a11y/Zackos"
 GH_TOKEN="${GITHUB_TOKEN}"
 
-echo "=== [1/8] apt/tooling ==="
+echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev
 
 mkdir -p "$WORK"
 cd "$WORK"
 
-echo "=== [2/8] fetch installer source from GitHub checkpoint ==="
+echo "=== [2/9] fetch installer source from GitHub checkpoint ==="
 rm -rf gh_repo
 git clone -q "https://zackmsa777-a11y:${GH_TOKEN}@github.com/zackmsa777-a11y/Zackos.git" gh_repo
 INSTALLER_SRC="$WORK/gh_repo/patches/zackos-installer"
 test -f "$INSTALLER_SRC/core.py" || { echo "FATAL: installer source missing from GitHub checkpoint"; exit 1; }
 
-echo "=== [3/8] fetch v4.2 base ISO (skip if already present+verified) ==="
+echo "=== [3/9] fetch v4.2 base ISO (skip if already present+verified) ==="
 if [ ! -f zackos_v42.iso ] || [ "$(md5sum zackos_v42.iso 2>/dev/null | awk '{print $1}')" != "01ce19d3e421f53f7212c0759a1d9176" ]; then
   for p in part00 part01 part02; do
     curl -sL -o zackos_v42_$p "https://github.com/zackmsa777-a11y/Zackos/releases/download/v4.2-live-cleaned-iso/zackos_v42_$p" &
@@ -32,14 +32,14 @@ if [ ! -f zackos_v42.iso ] || [ "$(md5sum zackos_v42.iso 2>/dev/null | awk '{pri
 fi
 echo "v4.2 iso md5: $(md5sum zackos_v42.iso | awk '{print $1}') (expect 01ce19d3e421f53f7212c0759a1d9176)"
 
-echo "=== [4/8] extract ISO + squashfs ==="
+echo "=== [4/9] extract ISO + squashfs ==="
 rm -rf iso_layout rootfs
 mkdir -p iso_layout
 xorriso -osirrox on -indev zackos_v42.iso -extract / iso_layout > /dev/null 2>&1
 unsquashfs -d rootfs iso_layout/squash.img > /dev/null 2>&1
 echo "rootfs size: $(du -sh rootfs | cut -f1)"
 
-echo "=== [4b/8] install ZackOS live persistence init ==="
+echo "=== [4b/9] install ZackOS live persistence init ==="
 rm -rf initrd_work
 mkdir -p initrd_work
 # The base image ships a gzip-compressed cpio initramfs. Replace only its
@@ -49,7 +49,7 @@ cp "$INSTALLER_SRC/../live-boot/zack-live-init.sh" initrd_work/init
 chmod +x initrd_work/init
 (cd initrd_work && find . -print | cpio -o -H newc --quiet | gzip -9) > iso_layout/boot/initramfs.img
 
-echo "=== [5/8] prep chroot (dev nodes, resolv.conf, installer files) ==="
+echo "=== [5/9] prep chroot (dev nodes, resolv.conf, installer files) ==="
 cd rootfs
 rm -f dev/null dev/zero dev/random dev/urandom dev/tty dev/console
 mknod -m666 dev/null c 1 3
@@ -87,7 +87,7 @@ cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/rc.d/init.d/network
 chmod +x etc/init.d/network etc/rc.d/init.d/network
 cd "$WORK"
 
-echo "=== [6/8] install grub2 into rootfs via nix (needs network) ==="
+echo "=== [6/9] install grub2 into rootfs via nix (needs network) ==="
 GRUB_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-grub-2.12" 2>/dev/null | head -1)
 if [ -z "$GRUB_DIR" ]; then
   NIX_BIN="/${NIX_STORE_PATH}/bin"
@@ -104,7 +104,7 @@ done
 chroot rootfs /bin/sh -c "export PATH=/usr/local/sbin:\$PATH; grub-install --version" || { echo "FATAL: grub-install not runnable"; exit 1; }
 echo "grub-install OK"
 
-echo "=== [6b/8] install dhcpcd into rootfs via nix (live-boot DHCP + installer network access) ==="
+echo "=== [6b/9] install dhcpcd into rootfs via nix (live-boot DHCP + installer network access) ==="
 DHCPCD_DIR=$(find rootfs/nix/store -maxdepth 1 -iname "*-dhcpcd-*" ! -name "*.drv" 2>/dev/null | head -1)
 if [ -z "$DHCPCD_DIR" ]; then
   NIX_BIN="/${NIX_STORE_PATH}/bin"
@@ -118,7 +118,44 @@ ln -sf "/$DHCPCD_STORE/sbin/dhcpcd" rootfs/usr/local/sbin/dhcpcd
 chroot rootfs /bin/sh -c "export PATH=/usr/local/sbin:\$PATH; dhcpcd --version" || { echo "FATAL: dhcpcd not runnable"; exit 1; }
 echo "dhcpcd OK"
 
-echo "=== [7/8] repack squashfs + ISO ==="
+echo "=== [6c/9] rebuild kernel from checked-in config (real-hardware storage-driver fix) ==="
+# The v4.2 base ISO's kernel panics on real hardware with older/non-AHCI
+# SATA/PATA chipsets (confirmed on a Fujitsu Siemens Amilo Pa 1538,
+# nVidia C51D/MCP51 chipset: "VFS: Unable to mount root fs on
+# unknown-block(0,0)"). ZackOS boots with NO initramfs (root=PARTUUID,
+# see write_grub_cfg() in core.py), so any driver needed to see the root
+# disk MUST be compiled in statically - modules can't load before the
+# root-mount attempt. patches/kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config
+# is the checked-in ground-truth config (has SATA_NV/ATA_GENERIC/etc builtin
+# as of the 2026-08-09 fix) - always build FROM this exact file, never from
+# a fresh `make defconfig` (tried once, caused an unrelated scheduler/hrtimer
+# panic from config drift).
+KVER=6.16.1
+mkdir -p kernel_build
+cd kernel_build
+if [ ! -d "linux-$KVER" ]; then
+  [ -f "linux-$KVER.tar.xz" ] || curl -sL -o "linux-$KVER.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz"
+  tar xf "linux-$KVER.tar.xz"
+fi
+cd "linux-$KVER"
+cp "$WORK/gh_repo/patches/kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
+make olddefconfig > /dev/null
+make -j"$(nproc)" > "$WORK/kernel_build.log" 2>&1
+test -f arch/x86/boot/bzImage || { echo "FATAL: kernel build failed, see $WORK/kernel_build.log"; exit 1; }
+make INSTALL_MOD_PATH="$WORK/rootfs" modules_install >> "$WORK/kernel_build.log" 2>&1 || true
+
+# Preserve whatever vmlinuz-* name the base rootfs already uses (falls back
+# to the lfs-12.4 naming from scripts_chroot/kernel.sh if none found).
+OLD_KNAME=$(ls "$WORK/rootfs/boot" | grep '^vmlinuz-' | head -1)
+[ -n "$OLD_KNAME" ] || OLD_KNAME="vmlinuz-$KVER-lfs-12.4"
+cp arch/x86/boot/bzImage "$WORK/rootfs/boot/$OLD_KNAME"
+cp System.map "$WORK/rootfs/boot/System.map-$KVER"
+cp .config "$WORK/rootfs/boot/config-$KVER-lfs-12.4"
+cp arch/x86/boot/bzImage "$WORK/iso_layout/boot/vmlinuz"
+cd "$WORK"
+echo "kernel rebuild OK -> $OLD_KNAME"
+
+echo "=== [7/9] repack squashfs + ISO ==="
 cd rootfs
 rm -rf proc/self sys/*
 rm -f dev/null dev/zero dev/random dev/urandom dev/tty dev/console
@@ -141,6 +178,6 @@ ls iso_layout/boot/
 cp squash_installer.img iso_final/squash.img
 cat iso_layout/boot/grub/grub.cfg 2>/dev/null > iso_final/boot/grub/grub.cfg || true
 grub-mkrescue -o zackos_installer.iso iso_final > /dev/null 2>&1
-echo "=== [8/8] done ==="
+echo "=== [9/9] done ==="
 ls -la zackos_installer.iso
 md5sum zackos_installer.iso
