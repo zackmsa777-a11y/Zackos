@@ -41,7 +41,7 @@ def main():
         package_manager = choose("package_manager", "nix")
         init = choose("init", "sysvinit")
         bootloader = choose("bootloader", "grub")
-        desktop = choose("desktop", "i3")
+        desktop = choose("desktop", "plasma-x11")
     except ValueError as exc:
         print(f"Invalid profile: {exc}")
         sys.exit(1)
