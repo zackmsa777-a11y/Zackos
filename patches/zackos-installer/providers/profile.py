@@ -9,7 +9,7 @@ CHOICES = {
     "package_manager": ("apt", "emerge", "xbps", "nix"),
     "init": ("sysvinit", "runit", "openrc", "systemd"),
     "bootloader": ("grub", "limine", "systemd-boot", "refind"),
-    "desktop": ("none", "i3", "hyprland"),
+    "desktop": ("none", "i3", "plasma-x11", "hyprland"),
     "persistence": ("overlay", "none"),
 }
 

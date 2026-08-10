@@ -10,3 +10,10 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:${PATH}"
 for script in /etc/profile.d/*.sh; do
     [ -r "${script}" ] && . "${script}"
 done
+
+# ZackOS graphical session defaults for software-rendered KDE X11.
+export XDG_DATA_DIRS="/root/.nix-profile/share:/usr/share:/usr/local/share:${XDG_DATA_DIRS:-}"
+export XDG_CONFIG_DIRS="/root/.nix-profile/etc/xdg:/etc/xdg:${XDG_CONFIG_DIRS:-}"
+export LIBGL_ALWAYS_SOFTWARE=1
+export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+export LD_LIBRARY_PATH="/root/.nix-profile/lib:/run/opengl-driver/lib:${LD_LIBRARY_PATH:-}"

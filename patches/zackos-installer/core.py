@@ -359,6 +359,8 @@ def write_profile(profile):
 
 
 def install_wm(choice):
+    if choice == "plasma-x11":
+        return install_plasma_x11()
     if choice == "none":
         log("Skipping WM install (console-only system).")
         return
@@ -430,9 +432,27 @@ def install_wm(choice):
     register_nix_fonts()
 
     write_xorg_conf()
-    write_xinitrc()
-    write_i3_config()
+    write_xinitrc(choice)
+    if choice == "i3":
+        write_i3_config()
 
+
+def install_plasma_x11():
+    """Install KDE Plasma on X11, deliberately avoiding Wayland/DRM paths."""
+    wait_for_network()
+    export = (f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
+              f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; " )
+    packages = ["nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
+        "nixpkgs.xorg.xf86inputevdev", "nixpkgs.mesa", "nixpkgs.libglvnd",
+        "nixpkgs.dejavu_fonts", "nixpkgs.rxvt-unicode",
+        "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
+        "nixpkgs.kdePackages.kwin-x11", "nixpkgs.kdePackages.systemsettings",
+        "nixpkgs.kdePackages.dolphin", "nixpkgs.kdePackages.konsole",
+        "nixpkgs.kdePackages.breeze", "nixpkgs.kdePackages.breeze-icons", "nixpkgs.elogind"]
+    result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA " + " ".join(packages))
+    if result.returncode != 0: raise InstallError("Failed to install KDE Plasma X11 package set")
+    link_nix_bins(["startx", "Xorg", "xauth", "urxvt", "startplasma-x11", "kwin_x11", "plasmashell", "konsole", "dolphin"], require_all=True)
+    register_nix_fonts(); write_xorg_conf(); write_xinitrc("plasma-x11")
 
 def register_nix_fonts():
     """Point the base LFS system's fontconfig at the Nix-installed fonts.
@@ -460,105 +480,104 @@ def register_nix_fonts():
 
 
 def write_xorg_conf():
-    """Let Xorg autodetect video + input, the same way Fedora/Arch/Ubuntu
-    do it, instead of a hand-written video Driver section.
+    """Install the proven no-GPU VirtualBox/LFS X11 configuration."""
+    path = os.path.join(TARGET, "etc/X11/xorg.conf")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write('''Section "ServerLayout"
+    Identifier "layout"
+    Screen 0 "screen0" 0 0
+    InputDevice "kbd" "CoreKeyboard"
+    InputDevice "mouse" "CorePointer"
+EndSection
+Section "ServerFlags"
+    Option "AutoAddDevices" "false"
+EndSection
+Section "Files"
+    ModulePath "/root/.nix-profile/lib/xorg/modules"
+EndSection
+Section "Module"
+    Load "evdev"
+    Load "glx"
+EndSection
+Section "InputDevice"
+    Identifier "kbd"
+    Driver "evdev"
+    Option "Device" "/dev/input/event3"
+EndSection
+Section "InputDevice"
+    Identifier "mouse"
+    Driver "evdev"
+    Option "Device" "/dev/input/event5"
+EndSection
+Section "Device"
+    Identifier "card0"
+    Driver "modesetting"
+    Option "AccelMethod" "none"
+    Option "ShadowFB" "true"
+EndSection
+Section "Screen"
+    Identifier "screen0"
+    Device "card0"
+EndSection
+''')
+    egl_dir = os.path.join(TARGET, "etc/glvnd/egl_vendor.d")
+    os.makedirs(egl_dir, exist_ok=True)
+    with open(os.path.join(egl_dir, "10_mesa.json"), "w") as f:
+        f.write('{"file_path":"/root/.nix-profile/lib/libEGL_mesa.so.0","vendor_name":"mesa"}\n')
+    module_dir = os.path.join(TARGET, "root/.nix-profile/lib/xorg/modules/extensions")
+    os.makedirs(module_dir, exist_ok=True)
+    store = os.path.join(TARGET, "nix/store")
+    for entry in os.listdir(store):
+        candidate = os.path.join(store, entry, "lib/xorg/modules/extensions/libglx.so")
+        if os.path.exists(candidate):
+            link = os.path.join(module_dir, "libglx.so")
+            if os.path.lexists(link): os.remove(link)
+            os.symlink(candidate.replace(TARGET, ""), link)
+            break
 
-    HISTORY: the previous version of this function hardcoded the legacy
-    "vesa" driver + its vbe/int10/shadow helper modules, because at the
-    time /etc/X11/xorg.conf didn't exist at all and Xorg's autoconfig
-    found no usable KMS device. Root cause turned out to be the missing
-    config file, not a missing KMS driver - the kernel config here
-    already has CONFIG_DRM_I915=y (real hardware, e.g. the ThinkPad
-    T450's Broadwell iGPU) and CONFIG_DRM_BOCHS=y (QEMU's default std
-    VGA), so xorg-server's built-in "modesetting" DDX driver (bundled
-    since xorg-server 1.18, no separate xf86-video-* package needed)
-    binds to /dev/dri/card0 with zero video configuration - exactly how
-    every mainstream distro does it now; none of them ship a video
-    Driver section anymore. vesa is VBE/INT10-only and doesn't even have
-    a code path on UEFI boots, so it was never going to work on the
-    T450 (or older cache.nixos.org's ARM ISOs) once real hardware in
-    mind, and it's actively a regression vs. modesetting on QEMU too.
-    Only two small conf.d drop-ins are needed, matching upstream package
-    defaults: one for input (xf86-input-libinput's own
-    /usr/share/X11/xorg.conf.d/40-libinput.conf) and one quirks file
-    (xorg-server's own 10-quirks.conf, which blacklists the ThinkPad's
-    HDAPS accelerometer node so it isn't misdetected as a pointer -
-    directly relevant since this ships on the user's own ThinkPad T450).
-    """
-    # Remove any stale monolithic xorg.conf from a previous install/image
-    # so it can't override the KMS autodetect - Xorg reads
-    # /etc/X11/xorg.conf before xorg.conf.d if both exist.
-    xorg_conf = os.path.join(TARGET, "etc/X11/xorg.conf")
-    if os.path.exists(xorg_conf) or os.path.islink(xorg_conf):
-        os.remove(xorg_conf)
-
-    conf_d = os.path.join(TARGET, "usr/share/X11/xorg.conf.d")
-    os.makedirs(conf_d, exist_ok=True)
-
-    with open(os.path.join(conf_d, "10-quirks.conf"), "w") as f:
-        f.write(
-            "Section \"InputClass\"\n"
-            "    Identifier \"ThinkPad HDAPS accelerometer blacklist\"\n"
-            "    MatchProduct \"ThinkPad HDAPS accelerometer data\"\n"
-            "    Option \"Ignore\" \"on\"\n"
-            "EndSection\n"
-        )
-
-    with open(os.path.join(conf_d, "40-libinput.conf"), "w") as f:
-        f.write(
-            "Section \"InputClass\"\n"
-            "    Identifier \"libinput pointer catchall\"\n"
-            "    MatchIsPointer \"on\"\n"
-            "    MatchDevicePath \"/dev/input/event*\"\n"
-            "    Driver \"libinput\"\n"
-            "EndSection\n\n"
-            "Section \"InputClass\"\n"
-            "    Identifier \"libinput keyboard catchall\"\n"
-            "    MatchIsKeyboard \"on\"\n"
-            "    MatchDevicePath \"/dev/input/event*\"\n"
-            "    Driver \"libinput\"\n"
-            "EndSection\n\n"
-            "Section \"InputClass\"\n"
-            "    Identifier \"libinput touchpad catchall\"\n"
-            "    MatchIsTouchpad \"on\"\n"
-            "    MatchDevicePath \"/dev/input/event*\"\n"
-            "    Driver \"libinput\"\n"
-            "    Option \"Tapping\" \"on\"\n"
-            "    Option \"NaturalScrolling\" \"true\"\n"
-            "EndSection\n\n"
-            "Section \"InputClass\"\n"
-            "    Identifier \"libinput touchscreen catchall\"\n"
-            "    MatchIsTouchscreen \"on\"\n"
-            "    MatchDevicePath \"/dev/input/event*\"\n"
-            "    Driver \"libinput\"\n"
-            "EndSection\n\n"
-            "Section \"InputClass\"\n"
-            "    Identifier \"libinput tablet catchall\"\n"
-            "    MatchIsTablet \"on\"\n"
-            "    MatchDevicePath \"/dev/input/event*\"\n"
-            "    Driver \"libinput\"\n"
-            "EndSection\n"
-        )
-
-
-def write_xinitrc():
-    """.xinitrc must launch i3 inside a D-Bus session.
-
-    BUG FIX (2026-08-08): the old .xinitrc was a bare `exec i3` with no
-    D-Bus session at all. Reproduced live: nm-applet/dconf/notifications
-    all failed with "DBUS_SESSION_BUS_ADDRESS is blank" and i3's own
-    exit/lock menu tools that shell out to notify-send silently no-op'd.
-    dbus-launch --exit-with-x11 starts a session bus and tears it down
-    when i3 exits, with zero extra service wiring needed.
-    """
-    content = "#!/bin/sh\nexec dbus-launch --exit-with-x11 i3\n"
+def write_xinitrc(choice="i3"):
+    """Create an X11 session with explicit software-rendering paths."""
+    if choice == "plasma-x11":
+        content = """#!/bin/sh
+export XDG_DATA_DIRS=/root/.nix-profile/share:/usr/share:/usr/local/share
+export XDG_CONFIG_DIRS=/root/.nix-profile/etc/xdg
+export QT_PLUGIN_PATH=/root/.nix-profile/lib/qt-6/plugins
+export QML2_IMPORT_PATH=/root/.nix-profile/lib/qt-6/qml
+export LIBGL_ALWAYS_SOFTWARE=1
+export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+export __GLX_VENDOR_LIBRARY_NAME=mesa
+export LD_LIBRARY_PATH=/root/.nix-profile/lib:/run/opengl-driver/lib
+exec dbus-run-session -- startplasma-x11
+"""
+    else:
+        content = "#!/bin/sh\nexport LANG=C.UTF-8\nexec dbus-run-session -- i3\n"
     for rel in ("etc/skel/.xinitrc", "root/.xinitrc"):
         path = os.path.join(TARGET, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(content)
-        os.chmod(path, 0o755)
-
+        with open(path, "w") as f: f.write(content)
+    if choice == "plasma-x11":
+        helper = os.path.join(TARGET, "root/start-kde.sh")
+        with open(helper, "w") as f:
+            f.write("""#!/bin/sh
+set -eu
+mkdir -p /run/dbus /run/opengl-driver/lib /run/user/0
+chmod 700 /run/user/0
+for lib in libGLX_mesa.so.0 libGL.so.1 libglapi.so.0 libGLX.so.0; do
+  found=$(find /nix/store -path "*/lib/$lib" 2>/dev/null | head -1 || true)
+  [ -n "$found" ] && ln -sf "$found" "/run/opengl-driver/lib/$lib"
+done
+[ -S /run/dbus/system_bus_socket ] || dbus-daemon --system --fork || true
+rm -f /tmp/.X*-lock /tmp/.X11-unix/* /root/.serverauth.*
+export XDG_DATA_DIRS=/root/.nix-profile/share:/usr/share:/usr/local/share
+export XDG_CONFIG_DIRS=/root/.nix-profile/etc/xdg
+export QT_PLUGIN_PATH=/root/.nix-profile/lib/qt-6/plugins
+export QML2_IMPORT_PATH=/root/.nix-profile/lib/qt-6/qml
+export LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+export __GLX_VENDOR_LIBRARY_NAME=mesa LD_LIBRARY_PATH=/root/.nix-profile/lib:/run/opengl-driver/lib
+exec dbus-run-session -- startx -- :0 vt7
+""")
+        os.chmod(helper, 0o755)
 
 def write_i3_config():
     """Ship a real i3 config (adapted from github.com/TxGVNN/i3-config,
@@ -720,9 +739,25 @@ def link_nix_bins(names, require_all=False):
         log("Optional provider binaries unavailable: " + ", ".join(missing))
 
 
+def repair_sysv_console():
+    """Guarantee a usable local + serial login on the sysvinit path."""
+    path = os.path.join(TARGET, "etc/inittab")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    old = open(path).read() if os.path.exists(path) else ""
+    lines = [line for line in old.splitlines() if not line.startswith(("id:", "1:2345:", "S0:2345:"))]
+    lines += ["id:3:initdefault:",
+              "1:2345:respawn:/sbin/agetty --noclear tty1 38400 linux",
+              "S0:2345:respawn:/sbin/agetty -L 115200 ttyS0 vt100"]
+    with open(path, "w") as f: f.write("\n".join(lines) + "\n")
+    prof = os.path.join(TARGET, "etc/profile")
+    with open(prof, "a") as f:
+        f.write('\nexport PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:${PATH}"\n')
+
+
 def install_init(choice, part=None):
     if choice == "sysvinit":
-        log("Keeping sysvinit (default, already configured).")
+        repair_sysv_console()
+        log("Keeping sysvinit with explicit tty1/ttyS0 getty configuration.")
         return
     if choice != "runit":
         raise InstallError(f"Init provider {choice!r} is not implemented yet")

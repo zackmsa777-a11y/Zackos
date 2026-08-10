@@ -38,6 +38,7 @@ PROVIDERS = {
     "desktop": [
         Provider("desktop", "none", "stable", "Console-only"),
         Provider("desktop", "i3", "stable", "Current X11 desktop path"),
+        Provider("desktop", "plasma-x11", "stable", "KDE Plasma 6 X11 software-rendered path"),
         Provider("desktop", "hyprland", "scaffold", "Wayland provider planned"),
     ],
 }
