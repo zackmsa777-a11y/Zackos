@@ -341,6 +341,8 @@ class Wizard(Gtk.ApplicationWindow):
     def values(self):
         import re
         values = {key: field.get_text() for key, field in self.fields.items()}
+        if self.desktop.get_active_id() == "i3" and values["username"] == "lightdm":
+            raise ValueError("LightDM uses this account for the sign-in screen. Choose another username.")
         if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", values["username"]) or values["username"] == "root":
             raise ValueError("Choose a regular username using lowercase letters, digits, underscores or dashes.")
         if (len(values["hostname"]) > 253 or not all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", p)
@@ -405,7 +407,11 @@ class Wizard(Gtk.ApplicationWindow):
         self.back.set_label("Stay in live session" if phase == "done" else "Return to desktop")
         self.forward.set_visible(phase != "working")
         self.result_title.set_text({"working": "Installing ZackOS", "done": "ZackOS is ready", "failed": "Installation stopped"}[phase])
-        self.activity.set_text(state["message"])
+        message = state["message"]
+        if phase == "done" and self.started_here and self.desktop.get_active_id() == "i3":
+            username = self.fields["username"].get_text()
+            message = f"After restarting, sign in as {username} to open i3."
+        self.activity.set_text(message)
         self.detail_text.get_buffer().set_text("\n".join(state.get("log", [])))
         self.meter.set_fraction(1.0 if phase == "done" else state["step"] / 5)
         if phase == "failed":

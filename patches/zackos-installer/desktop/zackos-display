@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Run the new user's first X11 session once, then supervise the usual XDM login."""
+"""Start LightDM on the installed disk or the temporary i3 session on live media."""
 import os
 from pathlib import Path
 import pwd
@@ -7,18 +7,18 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 
 BIN = "/nix/var/nix/profiles/default/bin"
 MARKER = Path("/boot/grub/zackos-first-user")
 STATE = Path("/run/zackos-first-session")
-SESSION = "/etc/X11/xdm/Xsession"
-XDM = [f"{BIN}/xdm", "-nodaemon", "-config", "/etc/X11/xdm/xdm-config"]
+SESSION = "/etc/X11/zackos-session"
 
 
 def account(name):
     user = pwd.getpwnam(name)
     if user.pw_uid < 1000 or user.pw_uid == 65534:
-        raise ValueError("first session requires a regular desktop user")
+        raise ValueError("live session requires a regular desktop user")
     return user
 
 
@@ -38,36 +38,43 @@ def start_client(name):
 
 def start_display(live=False):
     subprocess.run(["/usr/local/lib/zackos-installer/boot/splash-done"], check=False)
-    # Xinit exits at logout. The supervising init calls us again to start XDM.
+    if not live:
+        # The installed disk has taken over from the ISO, so retire its GRUB handoff.
+        MARKER.unlink(missing_ok=True)
+        os.environ["PATH"] = f"{BIN}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"
+        for _ in range(100):
+            if Path("/run/dbus/system_bus_socket").is_socket():
+                break
+            time.sleep(.1)
+        # Runit starts with a fresh /run. Record graphical sessions in utmp.
+        utmp = Path("/run/utmp")
+        if not utmp.exists():
+            utmp.touch(mode=0o644)
+        # Nix PAM looks for its shadow-password helper here. LightDM's PAM child runs as root.
+        helper = Path("/run/wrappers/bin/unix_chkpwd")
+        helper.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        if not os.path.lexists(helper):
+            helper.symlink_to(f"{BIN}/unix_chkpwd")
+        manager = "/nix/var/nix/profiles/default/sbin/lightdm"
+        os.execv(manager, [manager, "--config=/etc/lightdm/lightdm.conf"])
+
     if STATE.exists():
         shutil.rmtree(STATE)
-    if live or MARKER.exists():
-        name = "live" if live else MARKER.read_text().strip()
-        if not live:
-            MARKER.unlink()
-        try:
-            user = account(name)
-            STATE.mkdir(mode=0o711)
-            # xinit and Xorg use a root-owned authority file. The first client
-            # gets a separate cookie file, readable only by its desktop user.
-            STATE.chmod(0o711)
-            server = STATE / "server.auth"
-            client = STATE / "client.auth"
-            server.touch(mode=0o600)
-            subprocess.run([f"{BIN}/xauth", "-q", "-f", str(server)],
-                           input=f"add :0 . {secrets.token_hex(16)}\n", text=True, check=True)
-            client.touch(mode=0o600)
-            shutil.copyfile(server, client)
-            os.chown(client, user.pw_uid, user.pw_gid)
-            os.environ["XAUTHORITY"] = str(server)
-            cmd = [f"{BIN}/xinit", os.path.abspath(__file__), "--first-client", name,
-                   "--", f"{BIN}/Xorg", ":0", "vt7", "-nolisten", "tcp", "-auth", str(server)]
-            os.execv(cmd[0], cmd)
-        except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as exc:
-            print(f"First desktop session could not start: {exc}", file=sys.stderr, flush=True)
-    if live:
-        raise SystemExit("The live X11 session could not start")
-    os.execv(XDM[0], XDM)
+    user = account("live")
+    STATE.mkdir(mode=0o711)
+    STATE.chmod(0o711)
+    server = STATE / "server.auth"
+    client = STATE / "client.auth"
+    server.touch(mode=0o600)
+    subprocess.run([f"{BIN}/xauth", "-q", "-f", str(server)],
+                   input=f"add :0 . {secrets.token_hex(16)}\n", text=True, check=True)
+    client.touch(mode=0o600)
+    shutil.copyfile(server, client)
+    os.chown(client, user.pw_uid, user.pw_gid)
+    os.environ["XAUTHORITY"] = str(server)
+    cmd = [f"{BIN}/xinit", os.path.abspath(__file__), "--first-client", user.pw_name,
+           "--", f"{BIN}/Xorg", ":0", "vt7", "-nolisten", "tcp", "-auth", str(server)]
+    os.execv(cmd[0], cmd)
 
 
 if __name__ == "__main__":

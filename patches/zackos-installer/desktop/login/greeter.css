@@ -1,0 +1,49 @@
+#panel_window, #menubar, #menubar > menuitem {
+    background: #101b20;
+    color: #cedbd5;
+    border: 0;
+    font-family: Inter, sans-serif;
+}
+#menubar { padding: 3px 15px; }
+#clock_menuitem { font-weight: 600; }
+#login_window {
+    background-color: #17272c;
+    color: #f4f6ec;
+    border: 1px solid #46645e;
+    border-radius: 12px;
+    box-shadow: none;
+}
+#login_box { padding: 5px 7px 2px; }
+#content_frame, #buttonbox_frame, #user_image_border, #user_image_border > border {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+}
+#user_combobox button, #prompt_entry, #login_button, #cancel_button {
+    border-radius: 6px;
+    min-height: 30px;
+    color: #f4f6ec;
+    box-shadow: none;
+    text-shadow: none;
+}
+#user_combobox button, #prompt_entry {
+    background: #101b20;
+    border: 1px solid #526d66;
+    padding: 3px 10px;
+    min-width: 130px;
+}
+#prompt_entry:focus { border-color: #cfee74; }
+#login_button {
+    background: #d8ff62;
+    color: #172122;
+    font-weight: bold;
+    border: 1px solid #d8ff62;
+    padding: 2px 17px;
+}
+#login_button:hover, #login_button:focus { background: #e6ff9e; }
+#cancel_button { background: #243a3c; border: 1px solid #46645e; }
+#greeter_infobar, #greeter_infobar revealer > box {
+    background: #3b2b2d;
+    color: #ffd9c8;
+    border: 0;
+}

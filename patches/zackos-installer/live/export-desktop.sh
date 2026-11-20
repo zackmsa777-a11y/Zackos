@@ -12,8 +12,11 @@ else
     nix-env -p "$work/profile" -f "$src/desktop/panel/runtime.nix" -i >&2
     profile=$(readlink -e "$work/profile")
 fi
-for name in i3 Xorg xinit xauth dbus-run-session feh zackos-panel runit nix-store nix-env; do
+for name in i3 Xorg xinit xauth dbus-run-session feh zackos-panel lightdm-gtk-greeter kitty zsh fastfetch runit nix-store nix-env; do
     test -x "$profile/bin/$name" || { echo "$name is missing from the desktop profile" >&2; exit 1; }
+done
+for file in sbin/lightdm bin/unix_chkpwd lib/security/pam_unix.so lib/security/pam_succeed_if.so lib/security/pam_permit.so lib/security/pam_deny.so; do
+    test -e "$profile/$file" || { echo "$file is missing from the desktop profile" >&2; exit 1; }
 done
 gtk=$(nix-build --no-out-link "$src/desktop/gtk-python.nix")
 meta=usr/local/share/zackos-media

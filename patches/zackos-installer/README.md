@@ -42,7 +42,8 @@ BIOS, two vCPUs, 4 GiB RAM and VirtIO graphics.
 The graphical default installs glibc, Nix, runit, GRUB and i3. With automatic
 restart enabled on the review screen, setup displays a 20-second countdown
 after success. **Stay in live session** cancels that restart. The installed
-disk opens i3 once as the account you created. XDM handles subsequent sign-ins.
+disk opens the ZackOS LightDM sign-in screen. Choose your account and enter
+your password to start i3. Logging out returns to the same screen.
 Plasma X11 and the console with runit require access to the Nix cache.
 For a console-mode installation, `zackinstall --no-reboot` keeps the live session open.
 
@@ -58,9 +59,14 @@ and press Enter to open it. Escape or a click outside closes the menu.
 The menu includes visible XDG desktop entries for the system and user.
 The animations follow GTK’s `gtk-enable-animations` setting.
 
+Super+Enter opens Kitty with Zsh. Each fresh Kitty shell displays the folded
+Z and system details from Fastfetch. Run `fastfetch` to refresh them.
+Edit `~/.config/kitty/kitty.conf`, `~/.zshrc`, or
+`~/.config/fastfetch/config.jsonc` to personalize your account.
+
 | Shortcut | Action |
 | --- | --- |
-| Super + Enter | Open a terminal |
+| Super + Enter | Open Kitty |
 | Super + D | Open or close the application launcher |
 | Super + Shift + D | Run a command with dmenu |
 | Super + B | Start Firefox |
@@ -104,9 +110,9 @@ python3 test-live-installer.py ZackOS-i3.iso --screenshot installer.png
 
 This captures the installer from the live user’s X session using scrot.
 To test a powered-off disk in a disposable
-snapshot, run `python3 test-i3-boot.py zackos.qcow2 --user zack`. For a
-fresh installation whose first session has yet to start, add `--first-boot`
-to verify automatic entry and the return to XDM on logout.
+snapshot, run `python3 test-i3-boot.py zackos.qcow2 --user zack`. Add `--first-boot`
+to also verify the installation-media handoff marker was consumed. The check
+tests password rejection, sign-in to i3, the default terminal, and logout.
 
 ## Boot artwork
 

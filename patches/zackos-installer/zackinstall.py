@@ -122,8 +122,8 @@ def main():
         print("Passwords do not match. Aborting.")
         sys.exit(1)
     if desktop == "i3":
-        username = ask("Desktop username (this account opens i3 on first boot)", "zack")
-        if username == "root" or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
+        username = ask("Desktop username for the sign-in screen", "zack")
+        if username in ("root", "lightdm") or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
             print("Choose a regular account name using lowercase letters, digits, _ or -.")
             sys.exit(1)
         user_password = getpass.getpass(f"Password for {username}: ")
@@ -150,7 +150,7 @@ def main():
 
     live_media = "zackos.live=1" in Path("/proc/cmdline").read_text().split()
     if desktop == "i3" and live_media and not args.no_reboot:
-        print(f"Restarting into ZackOS. The first i3 session will open as {username}.", flush=True)
+        print(f"Restarting into ZackOS. Sign in as {username} to open i3.", flush=True)
         subprocess.run(["sync"], check=True)
         if subprocess.run(["/sbin/shutdown", "-r", "now"]).returncode:
             print("Automatic restart failed. Reboot into the installed disk.")

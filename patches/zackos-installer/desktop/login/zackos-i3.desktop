@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=ZackOS i3
+Comment=ZackOS desktop with the i3 window manager
+Exec=/nix/var/nix/profiles/default/bin/i3
+TryExec=/nix/var/nix/profiles/default/bin/i3
+Type=Application
+DesktopNames=i3

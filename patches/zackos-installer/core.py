@@ -19,6 +19,7 @@ from providers.profile import InstallerProfile
 from providers.registry import validate_profile
 
 TARGET = "/mnt/target"
+DESKTOP_SHELL = "/nix/var/nix/profiles/default/bin/zsh"
 NIX_CHANNEL = "/nix/var/nix/profiles/per-user/root/channels/nixpkgs"
 
 
@@ -314,7 +315,7 @@ def write_grub_cfg(part, label="ZACKROOT"):
     logo_dir = Path(TARGET, "usr/share/pixmaps")
     logo_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(branding / "zackos.svg", logo_dir / "zackos.svg")
-    graphical = (Path(TARGET) / "etc/X11/xdm/xdm-config").is_file()
+    graphical = (Path(TARGET) / "etc/lightdm/lightdm.conf").is_file()
     boot_args = " quiet loglevel=3 init=/usr/local/lib/zackos-installer/boot/installed-init" if graphical else ""
     graphics_handoff = "    set gfxpayload=keep\n" if graphical else ""
     cfg = f"""# ZackOS boot menu.
@@ -373,8 +374,8 @@ def set_root_password(password):
     set_password("root", password)
 
 
-def create_user(username, password, use_wheel=True):
-    run(["chroot", TARGET, "useradd", "-m", "-s", "/bin/bash", "--", username])
+def create_user(username, password, use_wheel=True, shell="/bin/bash"):
+    run(["chroot", TARGET, "useradd", "-m", "-s", shell, "--", username])
     set_password(username, password)
     if use_wheel:
         run(["chroot", TARGET, "groupadd", "-f", "wheel"])
@@ -461,6 +462,7 @@ def install_wm(choice, bundled=False):
         "Xorg", "xauth", "xrdb", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
     configure_i3_desktop()
+    configure_lightdm()
     register_nix_fonts()
 
     write_xinitrc(choice)
@@ -502,20 +504,7 @@ def configure_i3_desktop():
         f"exec {profile}/bin/dbus-daemon --system --nofork --nopidfile\n"
     )
     service.chmod(0o755)
-    xdm = target / "etc/X11/xdm"
-    xdm.mkdir(parents=True, exist_ok=True)
-    (target / "var/lib/xdm").mkdir(mode=0o700, parents=True, exist_ok=True)
-    (xdm / "Xservers").write_text(f":0 local {profile}/bin/Xorg vt7 -nolisten tcp\n")
-    (xdm / "xdm-config").write_text(
-        "DisplayManager.servers: /etc/X11/xdm/Xservers\n"
-        "DisplayManager.requestPort: 0\n"
-        "DisplayManager.authDir: /var/lib/xdm\n"
-        "DisplayManager.errorLogFile: /var/log/xdm.log\n"
-        "DisplayManager.pidFile: /run/xdm.pid\n"
-        "DisplayManager*authorize: true\n"
-        "DisplayManager*session: /etc/X11/xdm/Xsession\n"
-    )
-    session = xdm / "Xsession"
+    session = target / "etc/X11/zackos-session"
     session.write_text(
         "#!/bin/sh\n"
         f"export PATH={profile}/bin:/usr/local/bin:/usr/bin:/bin\n"
@@ -524,7 +513,8 @@ def configure_i3_desktop():
         'mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"\n'
         "xrdb -nocpp -merge /etc/X11/zackos.Xresources\n"
         '[ ! -r "$HOME/.Xresources" ] || xrdb -merge "$HOME/.Xresources"\n'
-        "exec dbus-run-session -- i3\n"
+        'if [ "$#" -eq 0 ]; then set -- i3; fi\n'
+        'exec dbus-run-session -- "$@"\n'
     )
     session.chmod(0o755)
     (target / "tmp").chmod(0o1777)
@@ -532,6 +522,47 @@ def configure_i3_desktop():
     (target / "etc/shadow").chmod(0o600)
 
 
+def configure_lightdm():
+    target = Path(TARGET)
+    src = Path(__file__).with_name("desktop") / "login"
+    profile = "/nix/var/nix/profiles/default"
+    # Install only the two LightDM PAM services, leaving console authentication intact.
+    files = {
+        "lightdm.conf": "etc/lightdm/lightdm.conf",
+        "lightdm-gtk-greeter.conf": "etc/lightdm/lightdm-gtk-greeter.conf",
+        "users.conf": "etc/lightdm/users.conf",
+        "lightdm.pam": "etc/pam.d/lightdm",
+        "lightdm-greeter.pam": "etc/pam.d/lightdm-greeter",
+        "zackos-i3.desktop": "usr/share/xsessions/zackos-i3.desktop",
+        "sign-in.png": "usr/share/backgrounds/zackos/sign-in.png",
+        "avatar.png": "usr/share/pixmaps/zackos-avatar.png",
+    }
+    for name, destination in files.items():
+        path = target / destination
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src / name, path)
+        path.chmod(0o644)
+    wrapper = target / "etc/lightdm/zackos-greeter"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"export XDG_DATA_DIRS={profile}/share:/usr/local/share:/usr/share\n"
+        'exec "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    if subprocess.run(["chroot", TARGET, "id", "-u", "lightdm"], capture_output=True).returncode:
+        run(["chroot", TARGET, "useradd", "--system", "--user-group", "--no-create-home",
+             "--home-dir", "/var/lib/lightdm", "--shell", "/usr/sbin/nologin", "lightdm"])
+    run(["chroot", TARGET, "install", "-d", "-m", "0750", "-o", "lightdm", "-g", "lightdm",
+         "/var/lib/lightdm", "/var/lib/lightdm/.config", "/var/lib/lightdm/.config/gtk-3.0"])
+    (target / "var/lib/lightdm-data").mkdir(mode=0o755, exist_ok=True)
+    css = target / "var/lib/lightdm/.config/gtk-3.0/gtk.css"
+    shutil.copyfile(src / "greeter.css", css)
+    css.chmod(0o644)
+    # The LFS system bus looks under /etc, while Nix installs this policy in its profile.
+    policy = target / "etc/dbus-1/system.d/org.freedesktop.DisplayManager.conf"
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    if not os.path.lexists(policy):
+        policy.symlink_to(profile + "/share/dbus-1/system.d/" + policy.name)
 
 
 def install_plasma_x11():
@@ -648,7 +679,7 @@ export LD_LIBRARY_PATH=/root/.nix-profile/lib:/run/opengl-driver/lib
 exec dbus-run-session -- startplasma-x11
 """
     else:
-        content = "#!/bin/sh\nexec /etc/X11/xdm/Xsession\n"
+        content = "#!/bin/sh\nexec /etc/X11/zackos-session\n"
     for rel in ("etc/skel/.xinitrc", "root/.xinitrc"):
         path = os.path.join(TARGET, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -683,6 +714,11 @@ def write_i3_config():
         "i3status.conf": ["etc/zackos/i3status.conf"],
         "Xresources": ["etc/X11/zackos.Xresources"],
         "orbit.png": ["usr/share/backgrounds/zackos/orbit.png"],
+        "terminal/kitty.conf": ["etc/skel/.config/kitty/kitty.conf"],
+        "terminal/zprofile": ["etc/skel/.zprofile"],
+        "terminal/zshrc": ["etc/skel/.zshrc"],
+        "terminal/fastfetch.jsonc": ["etc/xdg/fastfetch/config.jsonc", "etc/skel/.config/fastfetch/config.jsonc"],
+        "terminal/logo.txt": ["usr/share/zackos/fastfetch-logo.txt"],
     }
     for name, destinations in files.items():
         for destination in destinations:
@@ -690,6 +726,20 @@ def write_i3_config():
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(desktop / name, path)
             path.chmod(0o644)
+
+    # Fastfetch reads Kitty's version here before falling back to a terminal query.
+    kitty_lib = Path(TARGET, "usr/lib/kitty")
+    if not os.path.lexists(kitty_lib):
+        kitty_lib.symlink_to("/nix/var/nix/profiles/default/lib/kitty")
+
+    shells = Path(TARGET, "etc/shells")
+    known = shells.read_text().splitlines() if shells.exists() else ["/bin/sh", "/bin/bash"]
+    if DESKTOP_SHELL not in known:
+        shells.write_text("\n".join([*known, DESKTOP_SHELL, ""]))
+    release = Path(TARGET, "etc/os-release")
+    if not os.path.lexists(release):
+        release.write_text('NAME=ZackOS\nPRETTY_NAME=ZackOS\nID=zackos\n'
+                           'HOME_URL="https://github.com/zackmsa777-a11y/Zackos"\n')
 
     gtk = Path(TARGET, "etc/gtk-3.0/settings.ini")
     gtk.parent.mkdir(parents=True, exist_ok=True)
@@ -772,14 +822,14 @@ def repair_sysv_console():
 
 
 def install_init(choice, part=None, bundled=False):
-    i3_desktop = (Path(TARGET) / "etc/X11/xdm/xdm-config").exists()
-    xdm_command = "/usr/local/lib/zackos-installer/desktop/zackos-display"
+    i3_desktop = (Path(TARGET) / "etc/lightdm/lightdm.conf").exists()
+    display_command = "/usr/local/lib/zackos-installer/desktop/zackos-display"
     if choice == "sysvinit":
         repair_sysv_console()
         if i3_desktop:
             with (Path(TARGET) / "etc/inittab").open("a") as inittab:
                 inittab.write("db:2345:respawn:/usr/local/sbin/zackos-dbus\n")
-                inittab.write(f"xd:2345:respawn:{xdm_command}\n")
+                inittab.write(f"xd:2345:respawn:{display_command}\n")
         log("Keeping sysvinit with explicit tty1/ttyS0 getty configuration.")
         return
     if choice != "runit":
@@ -992,7 +1042,7 @@ def install_init(choice, part=None, bundled=False):
     # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
     if i3_desktop:
         write_service("dbus", "/usr/local/sbin/zackos-dbus")
-        write_service("xdm", xdm_command)
+        write_service("lightdm", display_command)
     write_service("agetty-tty1", "setsid -c /sbin/agetty tty1 38400 linux")
     write_service("agetty-ttyS0", "setsid -c /sbin/agetty -L 115200 ttyS0 vt100")
 
@@ -1175,7 +1225,8 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
             install_wm(profile.desktop, bundled)
             report(3, "Setting up accounts and services")
             if username:
-                create_user(username, user_password or root_password)
+                create_user(username, user_password or root_password,
+                            shell=DESKTOP_SHELL if profile.desktop == "i3" else "/bin/bash")
             install_init(profile.init, part, bundled)
             report(4, "Installing GRUB")
             install_bootloader(disk, part)

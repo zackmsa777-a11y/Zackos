@@ -6,13 +6,14 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 from panelbar import Glyph, HEIGHT, Motion, label, styled
 
-PREFERRED = ("org.zackos.Installer.desktop", "firefox.desktop", "thunar.desktop", "xterm.desktop")
+PREFERRED = ("org.zackos.Installer.desktop", "firefox.desktop", "thunar.desktop", "kitty.desktop")
 FALLBACK = {
     "firefox.desktop": ("Web browser", "web-browser-symbolic", "web"),
     "thunar.desktop": ("File manager", "folder", "files"),
     "thunar-bulk-rename.desktop": ("Rename files", "edit", "edit"),
     "thunar-settings.desktop": ("File manager settings", "settings", "settings"),
     "rxvt-unicode.desktop": ("Terminal emulator", "terminal", "term"),
+    "kitty.desktop": ("ZackOS terminal", "utilities-terminal", "term"),
     "xterm.desktop": ("Terminal emulator", "terminal", "term"),
 }
 

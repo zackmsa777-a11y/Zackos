@@ -27,7 +27,7 @@ def main():
     try:
         user = pwd.getpwnam("live")
     except KeyError:
-        subprocess.run(["/usr/sbin/useradd", "-m", "-s", "/bin/bash", "live"], check=True)
+        subprocess.run(["/usr/sbin/useradd", "-m", "-s", core.DESKTOP_SHELL, "live"], check=True)
         user = pwd.getpwnam("live")
     if user.pw_uid < 1000 or user.pw_uid == 65534:
         raise SystemExit("Invalid live account")

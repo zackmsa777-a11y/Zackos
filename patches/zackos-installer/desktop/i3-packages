@@ -18,6 +18,11 @@ xdotool
 xclip
 i3lock
 dbus
-xdm
+lightdm
+lightdm-gtk-greeter
+linux-pam
+kitty
+zsh
+fastfetch
 firefox
 thunar

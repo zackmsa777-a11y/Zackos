@@ -25,7 +25,7 @@ def main():
     parser.add_argument("disk", type=Path)
     parser.add_argument("--user", default="tester", help="existing unprivileged desktop test account")
     parser.add_argument("--first-boot", action="store_true",
-                        help="verify the automatic session and its logout before testing XDM")
+                        help="also check that the installation-media handoff marker was consumed")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*", args.user) or args.user == "root":
         parser.error("provide a regular local test account")
@@ -57,27 +57,33 @@ def main():
                 vm.expect_exact("PASSED_42", timeout=timeout + 10)
                 vm.expect(r"# ")
 
-            vm.sendline("export DISPLAY=:0")
+            vm.sendline("export PATH=/nix/var/nix/profiles/default/bin:$PATH "
+                        "DISPLAY=:0 XAUTHORITY=/run/lightdm/root/:0")
             vm.expect(r"# ")
+            greeter = "xdotool search --onlyvisible --class lightdm-gtk-greeter"
+            wait_guest(greeter)
+            wait_guest(f"! pgrep -u {args.user} -x i3")
             if args.first_boot:
-                vm.sendline("export XAUTHORITY=/run/zackos-first-session/server.auth")
-                vm.expect(r"# ")
-                wait_guest(f"pgrep -u {args.user} -x i3 && i3-msg -t get_workspaces "
-                           "&& test ! -e /boot/grub/zackos-first-user")
-                vm.sendline("i3-msg exit")
-                vm.expect(r"# ")
-            wait_guest("set -- /var/lib/xdm/authdir/authfiles/A:0-*; "
-                       "XAUTHORITY=$1 xdotool search --onlyvisible --name '^xlogin$'")
-            vm.sendline("set -- /var/lib/xdm/authdir/authfiles/A:0-*; export XAUTHORITY=$1")
-            vm.expect(r"# ")
+                wait_guest("test ! -e /boot/grub/zackos-first-user")
             with socket.socket(socket.AF_UNIX) as monitor:
                 monitor.connect(str(monitor_path))
-                time.sleep(5)
-                send_keys(monitor, args.user + "\n")
-                time.sleep(1)
+                state = "/var/lib/lightdm/.cache/lightdm-gtk-greeter/state"
+                selected = f"grep -qx 'last-user={args.user}' {state}"
+                # Up and Down at the password prompt select real entries in the GTK chooser.
+                vm.sendline(f"if ! {selected}; then n=$(wc -l < /etc/passwd); "
+                            "xdotool key --repeat $n Up; "
+                            f"for i in $(seq 1 $n); do {selected} && break; "
+                            "xdotool key Down; sleep .2; done; fi")
+                vm.expect(r"# ")
+                wait_guest(selected)
+                send_keys(monitor, "invalid" + local_password + "\n")
+                time.sleep(3)
+                wait_guest(greeter + f" && ! pgrep -u {args.user} -x i3")
                 send_keys(monitor, local_password + "\n")
                 wait_guest(f"pgrep -u {args.user} -x i3 && i3-msg -t get_version")
                 wait_guest("xdotool search --onlyvisible --name '^ZackOS Panel$'")
+                monitor.sendall(b"sendkey meta_l-ret 75\n")
+                wait_guest("xdotool search --onlyvisible --class kitty")
                 monitor.sendall(b"sendkey meta_l-d 75\n")
                 wait_guest("xdotool search --onlyvisible --name '^ZackOS Applications$'")
                 send_keys(monitor, "xterm\n")
@@ -101,13 +107,16 @@ def main():
                 for key in ("meta_l-f2", "meta_l-b"):
                     monitor.sendall(f"sendkey {key} 75\n".encode())
                     time.sleep(1)
-            wait_guest(f"ps -u {args.user} -o tty=,comm= | grep -E 'pts/[0-9]+ +bash' "
-                       "&& xdotool search --onlyvisible --class XTerm")
+            wait_guest(f"ps -u {args.user} -o tty=,comm= | grep -E 'pts/[0-9]+ +zsh' "
+                       "&& xdotool search --onlyvisible --class kitty")
             wait_guest("xdotool search --onlyvisible --class thunar "
                        "&& xdotool search --onlyvisible --class firefox")
             wait_guest("findmnt -no SOURCE / | grep -q /dev/vda1 "
                        "&& test -S /run/dbus/system_bus_socket && ! pgrep -x i3-nagbar")
-            print("Disk boot, graphical login, i3, terminal PTY, D-Bus, Firefox and Thunar passed.")
+            vm.sendline("i3-msg exit")
+            vm.expect(r"# ")
+            wait_guest(greeter + f" && ! pgrep -u {args.user} -x i3")
+            print("LightDM authentication and logout, i3, Kitty/Zsh, D-Bus, Firefox and Thunar passed.")
         finally:
             vm.close(force=True)
 

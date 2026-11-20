@@ -51,10 +51,10 @@ def planet(radius):
     return Image.fromarray(out)
 
 
-def render(size, menu, logo, destination):
+def render(size, menu, logo, destination, login=False):
     w, h = size
     W, H = w*SCALE, h*SCALE
-    cx, cy = (int(w*(.83 if menu else .69)), int(h*(.46 if menu else .445)))
+    cx, cy = (int(w*(.80 if login else .83 if menu else .69)), int(h*(.46 if menu else .445)))
     radius = int(min(w*.206, h*.29))
     y, x = np.mgrid[:h,:w]
     glow = np.exp(-((x-cx)/(radius*1.65))**2-((y-cy)/(radius*1.6))**2)
@@ -102,7 +102,7 @@ def render(size, menu, logo, destination):
     logo_h=int(logo_w*logo.height/logo.width)
     mark=logo.resize((logo_w*SCALE,logo_h*SCALE),Image.Resampling.LANCZOS)
     left=w*.08
-    top=h*(.225 if menu else .425)
+    top=h*(.29 if login else .225 if menu else .425)
     canvas.paste(mark,pt(left,top),mark)
     def label(x,y,s,sz,color,bold=False):
         family="DejaVuSansMono-Bold.ttf" if bold else "DejaVuSansMono.ttf"
@@ -112,7 +112,7 @@ def render(size, menu, logo, destination):
         label(left,h*.39,"Boot menu",max(15,h*.026),"#c8d9c9")
         line([(left,h*.895),(w*.92,h*.895)],"#3c514f")
         label(left,h*.913,"↑ ↓  Select       Enter  Boot       E  Edit",max(12,h*.020),"#a3b8b0")
-    else:
+    elif not login:
         line([(left,h*.75),(left+w*.231,h*.75)],"#3a5151")
         for i,(keys,action) in enumerate([("SUPER + ENTER","Terminal"),("SUPER + B","Firefox"),("SUPER + F2","Files")]):
             ty=h*(.771+i*.033)
@@ -128,6 +128,15 @@ if __name__=="__main__":
         logo.resize((360, round(360*logo.height/logo.width)), Image.Resampling.LANCZOS).save(HERE/"wordmark.png")
         render((1600,1000),False,logo,HERE.parent/"desktop/orbit.png")
         render((1024,768),True,logo,HERE/"grub/menu.png")
+        login_dir = HERE.parent / "desktop/login"
+        render((1600,1000),False,logo,login_dir/"sign-in.png",login=True)
+        # Isolate the original folded mark from the wordmark for the account tile.
+        symbol = logo.crop((0, 0, round(logo.width * .265), logo.height))
+        symbol = symbol.crop(symbol.getbbox())
+        symbol.thumbnail((76, 68), Image.Resampling.LANCZOS)
+        avatar = Image.new("RGBA", (112, 112), "#243c3c")
+        avatar.alpha_composite(symbol, ((112-symbol.width)//2, (112-symbol.height)//2))
+        avatar.save(login_dir/"avatar.png")
     # Nine-slice selection remains crisp at every GRUB resolution.
     for piece in ("nw","n","ne","w","c","e","sw","s","se"):
         tile=Image.new("RGBA",(6,6),"#d8ff62")
