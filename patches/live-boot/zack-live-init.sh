@@ -120,6 +120,7 @@ fi
 if [ -d /zackinstaller ]; then
     dst=/newroot/usr/local/lib/zackos-installer
     mkdir -p "$dst/providers" /newroot/usr/local/bin &&
+        cp -R /zackinstaller/branding "$dst/" &&
         cp /zackinstaller/*.py "$dst/" &&
         cp /zackinstaller/providers/*.py "$dst/providers/" &&
         cp /zackinstaller/zackinstall /newroot/usr/local/bin/ &&

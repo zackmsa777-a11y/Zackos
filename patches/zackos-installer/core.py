@@ -241,10 +241,8 @@ def install_bootloader(disk, part, label="ZACKROOT"):
 
 
 def write_grub_cfg(part, label="ZACKROOT"):
-    """Hand-write a minimal grub.cfg instead of trusting grub-mkconfig's
-    auto-generated config. grub-mkconfig defaults to `terminal_output
-    gfxterm` (graphical framebuffer) which is invisible over a serial
-    console and caused real hangs during boot testing in this project.
+    """Write the boot entries and install the optional GRUB graphics setup.
+    The splash configuration keeps a console fallback for text-only machines.
 
     IMPORTANT - two separate identifiers are needed here, for two
     different consumers, confirmed the hard way across three broken
@@ -293,8 +291,13 @@ def write_grub_cfg(part, label="ZACKROOT"):
 
     grub_dir = os.path.join(TARGET, "boot/grub")
     os.makedirs(grub_dir, exist_ok=True)
-    cfg = f"""# ZackOS hand-written grub.cfg - plain console output on purpose,
-# see write_grub_cfg() in the installer for why.
+    branding = Path(__file__).with_name("branding")
+    for asset in ("splash.cfg", "splash.png"):
+        shutil.copyfile(branding / asset, Path(grub_dir) / asset)
+    logo_dir = Path(TARGET, "usr/share/pixmaps")
+    logo_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(branding / "zackos.svg", logo_dir / "zackos.svg")
+    cfg = f"""# ZackOS boot menu.
 set timeout=5
 set default=0
 
@@ -302,6 +305,7 @@ insmod part_msdos
 insmod ext2
 search --no-floppy --fs-uuid --set=root {fs_uuid}
 terminal_output console
+source /boot/grub/splash.cfg
 
 menuentry "ZackOS" {{
     linux /boot/{kernel} root=PARTUUID={partuuid} ro console=tty0 console=ttyS0,115200

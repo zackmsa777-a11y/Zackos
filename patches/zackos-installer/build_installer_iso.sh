@@ -59,6 +59,7 @@ NIX_STORE_PATH=$(find nix/store -maxdepth 1 -iname "*-nix-2.35.1" | head -1)
 ln -sf "/${NIX_STORE_PATH}/bin/nix" proc/self/exe
 cp /etc/resolv.conf etc/resolv.conf
 mkdir -p usr/local/lib/zackos-installer usr/local/bin
+cp -r "$INSTALLER_SRC/branding" usr/local/lib/zackos-installer/
 cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos-installer/
 cp -a "$INSTALLER_SRC"/providers usr/local/lib/zackos-installer/
 cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
@@ -168,7 +169,8 @@ cp iso_layout/boot/vmlinuz iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*vm
 cp iso_layout/boot/initramfs.img iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*initramfs* iso_final/boot/ 2>/dev/null || true
 ls iso_layout/boot/
 cp squash_installer.img iso_final/squash.img
-cat iso_layout/boot/grub/grub.cfg 2>/dev/null > iso_final/boot/grub/grub.cfg || true
+cp "$INSTALLER_SRC"/branding/splash.{cfg,png} iso_final/boot/grub/
+{ echo 'source /boot/grub/splash.cfg'; cat iso_layout/boot/grub/grub.cfg; } > iso_final/boot/grub/grub.cfg
 grub-mkrescue -o zackos_installer.iso iso_final > /dev/null 2>&1
 echo "=== [9/9] done ==="
 ls -la zackos_installer.iso

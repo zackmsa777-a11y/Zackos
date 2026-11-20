@@ -59,3 +59,19 @@ xorriso, cpio, gzip, and Python 3. For a full kernel and base rebuild, use
 uses an installed regular account (default `tester`, selectable with `--user`),
 boots a temporary snapshot without installer media, and checks the local
 desktop and a terminal PTY.
+
+## Boot artwork
+
+The installer and installed disk display the ZackOS logo during the five-second
+GRUB timeout on supported BIOS graphics. Press Escape during the splash to
+open the menu. GRUB uses the PNG at boot, and the installed SVG is available
+at `/usr/share/pixmaps/zackos.svg`.
+
+To update the artwork, edit `branding/zackos.svg` and regenerate the PNG from
+this directory before rebuilding the ISO.
+
+```sh
+inkscape branding/zackos.svg -o /tmp/zackos-logo.png
+convert /tmp/zackos-logo.png -resize 440x -background '#10191c' -gravity center \
+  -extent 800x600 -alpha remove -alpha off -strip PNG24:branding/splash.png
+```
