@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Interactive ZackInstaller for composing an LFS-based ZackOS profile."""
 import getpass
+import os
 import sys
 
 sys.path.insert(0, "/usr/local/lib/zackos-installer")
@@ -39,12 +40,27 @@ def main():
     try:
         libc = choose("libc", "glibc")
         package_manager = choose("package_manager", "nix")
-        init = choose("init", "sysvinit")
+        init = choose("init", "runit")
         bootloader = choose("bootloader", "grub")
-        desktop = choose("desktop", "plasma-x11")
+        desktop = choose("desktop", "i3")
     except ValueError as exc:
         print(f"Invalid profile: {exc}")
         sys.exit(1)
+
+    while desktop != "none" or init == "runit":
+        try:
+            core.check_package_cache()
+            break
+        except core.InstallError as exc:
+            print(exc)
+            action = ask("Retry, configure proxy, install offline console, or abort? (retry/proxy/console/abort)", "abort")
+            if action == "console":
+                desktop, init = "none", "sysvinit"
+            elif action == "proxy":
+                proxy = getpass.getpass("Proxy URL (hidden): ").strip()
+                os.environ.update(https_proxy=proxy, http_proxy=proxy)
+            elif action != "retry":
+                return
 
     profile = InstallerProfile(
         libc=libc,

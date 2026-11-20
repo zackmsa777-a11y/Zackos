@@ -4,9 +4,7 @@
 # everything from GitHub + the v4.2 release, no manual steps needed.
 set -e
 WORK=/app/installer_work
-REPO_URL="https://github.com/zackmsa777-a11y/Zackos"
-GH_TOKEN="${GITHUB_TOKEN}"
-
+INSTALLER_SRC=$(cd "$(dirname "$0")" && pwd)
 echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
@@ -14,12 +12,6 @@ apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin
 
 mkdir -p "$WORK"
 cd "$WORK"
-
-echo "=== [2/9] fetch installer source from GitHub checkpoint ==="
-rm -rf gh_repo
-git clone -q "https://zackmsa777-a11y:${GH_TOKEN}@github.com/zackmsa777-a11y/Zackos.git" gh_repo
-INSTALLER_SRC="$WORK/gh_repo/patches/zackos-installer"
-test -f "$INSTALLER_SRC/core.py" || { echo "FATAL: installer source missing from GitHub checkpoint"; exit 1; }
 
 echo "=== [3/9] fetch v4.2 base ISO (skip if already present+verified) ==="
 if [ ! -f zackos_v42.iso ] || [ "$(md5sum zackos_v42.iso 2>/dev/null | awk '{print $1}')" != "01ce19d3e421f53f7212c0759a1d9176" ]; then
@@ -81,9 +73,9 @@ chroot "$WORK/rootfs" /bin/sh -c "echo 'root:zackos' | chpasswd"
 # NEVER actually applied by this build script before now -- confirmed via a
 # live boot test (bare `zackinstall`/`ip addr` both broken: PATH missing
 # /usr/local/{bin,sbin}, ens3 stayed DOWN with no DHCP client running).
-cp "$WORK/gh_repo/patches/etc-configs/profile" etc/profile
-cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/init.d/network
-cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/rc.d/init.d/network
+cp "$INSTALLER_SRC/../etc-configs/profile" etc/profile
+cp "$INSTALLER_SRC/../etc-configs/network-init" etc/init.d/network
+cp "$INSTALLER_SRC/../etc-configs/network-init" etc/rc.d/init.d/network
 chmod +x etc/init.d/network etc/rc.d/init.d/network
 cd "$WORK"
 
@@ -138,7 +130,7 @@ if [ ! -d "linux-$KVER" ]; then
   tar xf "linux-$KVER.tar.xz"
 fi
 cd "linux-$KVER"
-cp "$WORK/gh_repo/patches/kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
+cp "$INSTALLER_SRC/../kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
 make olddefconfig > /dev/null
 make -j"$(nproc)" > "$WORK/kernel_build.log" 2>&1
 test -f arch/x86/boot/bzImage || { echo "FATAL: kernel build failed, see $WORK/kernel_build.log"; exit 1; }

@@ -33,3 +33,29 @@ Both fixes verified end-to-end: full install via `zackinstall`
 using a 2-disk QEMU setup (persistence disk + blank install target), then
 a *separate* standalone boot of the install target alone, reaching a
 working GRUB menu and successful `switch_root`/kernel boot.
+
+## Install and boot i3 in QEMU
+
+Use the installer ISO from the i3 desktop release. With QEMU installed, run
+`./qemu-i3.sh zackos.qcow2 ZackOS-i3.iso` from this directory. It creates a
+24 GiB disk if needed. Log in to the live system as `root` with password
+`zackos` and run `zackinstall`. The default profile is glibc, Nix, runit,
+GRUB and i3. The installer checks HTTPS access to the Nix cache before
+partitioning. On failure it offers proxy configuration, retry, or an offline
+SysV console. Confirm only the VM disk you intend to erase.
+
+After installation, shut down the live VM and run `./qemu-i3.sh zackos.qcow2`
+to boot from disk. Sign in to the XDM graphical login to start i3. Use Super+F2nter for a terminal,
+Super+B for Firefox, and Super+F2 for Thunar. The serial console remains
+available for maintenance. On the installed runit system, use
+`setsid -f /sbin/poweroff </dev/null >/dev/null 2>&1` when shutting down
+from the serial console so stopping getty leaves the shutdown process running.
+
+To rebuild the i3 release ISO, run `./remaster-iso.sh v5.7.iso ZackOS-i3.iso`
+from the release checkout. The script checks the base ISO digest and requires
+xorriso, cpio, gzip, and Python 3. For a full kernel and base rebuild, use
+`build_installer_iso.sh` instead. To smoke-test a powered-off install, run
+`python3 test-i3-boot.py zackos.qcow2`. The test requires pexpect and QEMU,
+uses an installed regular account (default `tester`, selectable with `--user`),
+boots a temporary snapshot without installer media, and checks the local
+desktop and a terminal PTY.

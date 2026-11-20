@@ -28,15 +28,14 @@ Boot-verified end to end: reaches a real login prompt, logs in, gives you a work
 
 ## Get it
 
-Grab the latest live ISO from [Releases](../../releases) — it's split into ~400MB parts to fit GitHub's asset limits:
+For a persistent i3 desktop, boot the i3 installer ISO with 4 GiB of RAM,
+VirtIO graphics, and a 24 GiB virtual disk. Log in to the installer as
+`root` with password `zackos` and run `zackinstall`. The desktop install
+downloads Firefox, Thunar and the X11 packages from Nix. See the
+[installer and QEMU instructions](patches/zackos-installer/README.md).
 
-```bash
-cat lfs_live_part* > lfs_live.iso
-qemu-system-x86_64 -cdrom lfs_live.iso -m 2G -nographic
-# login: root / lfs
-```
-
-Or boot it on real hardware / any hypervisor that can boot from an ISO. Root's writable layer is RAM-only (tmpfs overlay) unless you set up persistence yourself.
+Older live images have different download, login and persistence instructions.
+Use the notes for the image you downloaded. [Releases](../../releases)
 
 ## Build it yourself
 
@@ -65,8 +64,8 @@ This has stopped being "just an LFS exercise." The plan:
 - [x] **Our own package manager, written in C** — no more manual `scripts_chroot/*.sh` babysitting. Dependency resolution, versioned installs, clean uninstall, the real deal. This is the next big milestone — built by us, not borrowed. we used nix lol 
 - [x] Persistent live storage (writable overlay that survives reboot)
 - [x] Networking stack (dhcpcd, iproute2, openssh) for a system that's actually usable off a LAN
-- [ ] Browser support (Firefox — the big one; needs a Rust/Node toolchain bootstrap first)
-- [ ] A proper installer, so this stops being "dd an ISO and pray"
+- [x] Firefox in the i3 desktop profile via Nix
+- [x] Interactive disk installation with ZackInstall
 
 If you want to help build the package manager, this is the spot — everything upstream of it (the OS it needs to manage) is already real and booting.
 

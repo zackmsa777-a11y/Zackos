@@ -116,5 +116,14 @@ mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/mnt/cdrom /newroot/mnt
 if [ -n "$PERSISTDEV" ]; then
     mount --bind /mnt/persist /newroot/mnt/persist 2>/dev/null || true
 fi
+# Installer-only rebuilds carry the checkout in the last initramfs archive.
+if [ -d /zackinstaller ]; then
+    dst=/newroot/usr/local/lib/zackos-installer
+    mkdir -p "$dst/providers" /newroot/usr/local/bin &&
+        cp /zackinstaller/*.py "$dst/" &&
+        cp /zackinstaller/providers/*.py "$dst/providers/" &&
+        cp /zackinstaller/zackinstall /newroot/usr/local/bin/ &&
+        chmod 755 /newroot/usr/local/bin/zackinstall || exec /bin/sh
+fi
 log "Starting ZackOS userspace"
 exec switch_root /newroot /sbin/init

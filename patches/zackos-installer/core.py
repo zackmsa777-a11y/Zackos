@@ -8,6 +8,8 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+import urllib.request
 import shutil
 
 from providers.profile import InstallerProfile
@@ -337,16 +339,22 @@ def set_hostname(hostname):
         f.write(f"127.0.0.1 localhost\n127.0.1.1 {hostname}\n")
 
 
+def set_password(username, password):
+    if any(ch in password for ch in "\n\r"):
+        raise InstallError("Passwords must fit on one line")
+    run(["chroot", TARGET, "chpasswd"], input_text=f"{username}:{password}\n")
+
+
 def set_root_password(password):
-    chroot_run(f"echo 'root:{password}' | chpasswd")
+    set_password("root", password)
 
 
 def create_user(username, password, use_wheel=True):
-    chroot_run(f"useradd -m -s /bin/bash {username}")
-    chroot_run(f"echo '{username}:{password}' | chpasswd")
+    run(["chroot", TARGET, "useradd", "-m", "-s", "/bin/bash", "--", username])
+    set_password(username, password)
     if use_wheel:
-        chroot_run(f"groupadd -f wheel")
-        chroot_run(f"usermod -aG wheel {username}")
+        run(["chroot", TARGET, "groupadd", "-f", "wheel"])
+        run(["chroot", TARGET, "usermod", "-aG", "wheel", "--", username])
 
 
 def write_profile(profile):
@@ -395,10 +403,6 @@ def install_wm(choice):
     # via KMS/udev exactly like Fedora/Arch/Ubuntu, same as no distro
     # ships a hand-written xorg.conf video Section anymore. vesa is
     # VBE/INT10-only and doesn't even exist as a code path on UEFI boots.
-    # NOTE: no eudev/dbus here - scripts_chroot/udev.sh and
-    # blfs-69-dbus.sh already build real udevd + dbus-daemon into /usr as
-    # part of the base LFS/BLFS system. Pulling a second copy from nix
-    # would be redundant and risks two udev daemons fighting over /run/udev.
     packages = [
         "nixpkgs.i3", "nixpkgs.i3status", "nixpkgs.dmenu", "nixpkgs.xterm",
         "nixpkgs.rxvt-unicode",
@@ -406,7 +410,7 @@ def install_wm(choice):
         "nixpkgs.xf86-input-libinput", "nixpkgs.mesa",
         "nixpkgs.dejavu_fonts",
         "nixpkgs.feh", "nixpkgs.scrot", "nixpkgs.xdotool", "nixpkgs.xclip",
-        "nixpkgs.i3lock",
+        "nixpkgs.i3lock", "nixpkgs.dbus", "nixpkgs.xdm", "nixpkgs.firefox", "nixpkgs.thunar",
     ]
     ok = False
     for attempt in range(1, 4):
@@ -429,12 +433,74 @@ def install_wm(choice):
         "i3", "i3bar", "i3status", "xterm", "urxvt", "dmenu", "startx",
         "Xorg", "xauth", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
+    configure_i3_desktop()
     register_nix_fonts()
 
-    write_xorg_conf()
     write_xinitrc(choice)
     if choice == "i3":
         write_i3_config()
+
+
+def configure_i3_desktop():
+    target = Path(TARGET)
+    profile = "/nix/var/nix/profiles/default"
+    xorg = target / "etc/X11/xorg.conf.d"
+    xorg.mkdir(parents=True, exist_ok=True)
+    (xorg / "20-nix-modules.conf").write_text(
+        f'Section "Files"\n ModulePath "{profile}/lib/xorg/modules"\nEndSection\n'
+    )
+    (xorg / "40-libinput.conf").write_text(
+        'Section "InputClass"\n Identifier "event devices"\n'
+        ' MatchDevicePath "/dev/input/event*"\n Driver "libinput"\nEndSection\n'
+    )
+    dbus = target / "etc/dbus-1"
+    dbus.mkdir(parents=True, exist_ok=True)
+    for bus in ("session", "system"):
+        name = bus + ".conf"
+        dest = dbus / name
+        if not dest.exists():
+            # The packaged defaults include /etc/dbus-1/<bus>.conf as an override.
+            # Installing them verbatim at that same path causes recursive includes.
+            config = subprocess.check_output(
+                ["chroot", TARGET, "cat", f"{profile}/share/dbus-1/{name}"], text=True
+            )
+            dest.write_text("".join(line for line in config.splitlines(True)
+                                    if f">/etc/dbus-1/{name}</include>" not in line))
+    (target / "var/lib/dbus").mkdir(parents=True, exist_ok=True)
+    subprocess.run(["chroot", TARGET, f"{profile}/bin/dbus-uuidgen", "--ensure"], check=True)
+    service = target / "usr/local/sbin/zackos-dbus"
+    service.write_text(
+        "#!/bin/sh\nset -eu\nmkdir -p /run/dbus\n"
+        f"ln -sfn {profile} /run/opengl-driver\n"
+        f"exec {profile}/bin/dbus-daemon --system --nofork --nopidfile\n"
+    )
+    service.chmod(0o755)
+    xdm = target / "etc/X11/xdm"
+    xdm.mkdir(parents=True, exist_ok=True)
+    (target / "var/lib/xdm").mkdir(mode=0o700, parents=True, exist_ok=True)
+    (xdm / "Xservers").write_text(f":0 local {profile}/bin/Xorg vt7 -nolisten tcp\n")
+    (xdm / "xdm-config").write_text(
+        "DisplayManager.servers: /etc/X11/xdm/Xservers\n"
+        "DisplayManager.requestPort: 0\n"
+        "DisplayManager.authDir: /var/lib/xdm\n"
+        "DisplayManager.errorLogFile: /var/log/xdm.log\n"
+        "DisplayManager.pidFile: /run/xdm.pid\n"
+        "DisplayManager*authorize: true\n"
+        "DisplayManager*session: /etc/X11/xdm/Xsession\n"
+    )
+    session = xdm / "Xsession"
+    session.write_text(
+        "#!/bin/sh\n"
+        f"export PATH={profile}/bin:/usr/local/bin:/usr/bin:/bin\n"
+        f"export XDG_DATA_DIRS={profile}/share:/usr/local/share:/usr/share\n"
+        "exec dbus-run-session -- i3\n"
+    )
+    session.chmod(0o755)
+    (target / "tmp").chmod(0o1777)
+    (target / "root").chmod(0o700)
+    (target / "etc/shadow").chmod(0o600)
+
+
 
 
 def install_plasma_x11():
@@ -607,7 +673,9 @@ floating_modifier $mod
 focus_follows_mouse no
 
 # terminal / launcher
-bindsym $mod+Return exec urxvt
+bindsym $mod+Return exec xterm
+bindsym $mod+b exec firefox
+bindsym $mod+F2 exec thunar
 bindsym $mod+Shift+d exec dmenu_run
 bindsym $mod+Shift+q kill
 bindsym $mod+x border toggle
@@ -755,8 +823,14 @@ def repair_sysv_console():
 
 
 def install_init(choice, part=None):
+    i3_desktop = (Path(TARGET) / "etc/X11/xdm/xdm-config").exists()
+    xdm_command = "/nix/var/nix/profiles/default/bin/xdm -nodaemon -config /etc/X11/xdm/xdm-config"
     if choice == "sysvinit":
         repair_sysv_console()
+        if i3_desktop:
+            with (Path(TARGET) / "etc/inittab").open("a") as inittab:
+                inittab.write("db:2345:respawn:/usr/local/sbin/zackos-dbus\n")
+                inittab.write(f"xd:2345:respawn:{xdm_command}\n")
         log("Keeping sysvinit with explicit tty1/ttyS0 getty configuration.")
         return
     if choice != "runit":
@@ -820,6 +894,7 @@ def install_init(choice, part=None):
             f"mount -o remount,rw {remount_target} / 2>/dev/null || true\n"
             "mount -t sysfs sysfs /sys 2>/dev/null || true\n"
             "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n"
+            "mkdir -p /dev/pts /dev/shm\n"
             "mount -t devpts devpts /dev/pts 2>/dev/null || true\n"
             "mount -t tmpfs tmpfs /run 2>/dev/null || true\n"
             "mount -a 2>/dev/null || true\n"
@@ -965,6 +1040,9 @@ def install_init(choice, part=None):
     # controlling) fixed authentication immediately with the unmodified
     # password - proving this was a tty/session bug, never a password one.
     # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
+    if i3_desktop:
+        write_service("dbus", "/usr/local/sbin/zackos-dbus")
+        write_service("xdm", xdm_command)
     write_service("agetty-tty1", "setsid -c /sbin/agetty tty1 38400 linux")
     write_service("agetty-ttyS0", "setsid -c /sbin/agetty -L 115200 ttyS0 vt100")
 
@@ -1099,6 +1177,15 @@ def cleanup_mounts():
     run(f"umount -lf {TARGET}", check=False)
 
 
+def check_package_cache():
+    try:
+        with urllib.request.urlopen("https://cache.nixos.org/nix-cache-info", timeout=12) as response:
+            if b"StoreDir: /nix/store" not in response.read(4096):
+                raise ValueError("unexpected response from the package cache")
+    except (OSError, ValueError) as exc:
+        raise InstallError("Cannot reach the Nix package cache over HTTPS") from exc
+
+
 def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
                   root_password="", username=None, user_password=None, profile=None):
     profile = profile or InstallerProfile(
@@ -1107,6 +1194,8 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
     errors = validate_profile(profile, require_implemented=True)
     if errors:
         raise InstallError("Profile is not installable yet: " + "; ".join(errors))
+    if profile.desktop != "none" or profile.init == "runit":
+        check_package_cache()
     part = partition_disk(disk)
     format_partition(part)
     mount_target(part)
@@ -1116,9 +1205,9 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
         write_profile(profile)
         set_hostname(hostname)
         set_root_password(root_password)
+        install_wm(profile.desktop)
         if username:
             create_user(username, user_password or root_password)
-        install_wm(profile.desktop)
         install_init(profile.init, part)
         install_bootloader(disk, part)
     finally:
