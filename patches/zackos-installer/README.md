@@ -48,8 +48,8 @@ sign-in. Use `zackinstall --no-reboot` to control the restart yourself.
 The **Start ZackOS** disk entry loads Linux and displays the logo with a
 white Pac-Man eating dots in both directions while services start. Xorg
 takes over when it is ready. The loader uses the first connected Linux KMS
-display it can initialize. The installer console and the **Recovery shell**
-entry keep text output available.
+display it can initialize. The live installer keeps the BIOS text console active for a local
+monitor and keyboard. The GRUB menu also offers a recovery entry.
 
 The i3 desktop includes the orbital wallpaper, a CPU/memory/clock status
 bar, themed XTerm and dmenu, and named workspaces. The Super key controls
