@@ -1,0 +1,4 @@
+#!/bin/sh
+# PID 1 immediately hands control to the selected init system.
+/usr/local/lib/zackos-installer/boot/zack-splash /boot/grub/splash.png </dev/null >/dev/null 2>&1 &
+exec /sbin/init "$@"

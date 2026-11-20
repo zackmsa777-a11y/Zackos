@@ -4,6 +4,7 @@ ZackOS Installer - core logic shared by TUI and Manual front-ends.
 Designed to run from within the booted live environment (real kernel,
 real mount()/chroot() available - this is NOT the build sandbox).
 """
+import configparser
 import os
 import re
 import subprocess
@@ -294,9 +295,13 @@ def write_grub_cfg(part, label="ZACKROOT"):
     branding = Path(__file__).with_name("branding")
     for asset in ("splash.cfg", "splash.png"):
         shutil.copyfile(branding / asset, Path(grub_dir) / asset)
+    shutil.copytree(branding / "grub", Path(grub_dir) / "zackos", dirs_exist_ok=True)
     logo_dir = Path(TARGET, "usr/share/pixmaps")
     logo_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(branding / "zackos.svg", logo_dir / "zackos.svg")
+    graphical = (Path(TARGET) / "etc/X11/xdm/xdm-config").is_file()
+    boot_args = " quiet loglevel=3 init=/usr/local/lib/zackos-installer/boot/installed-init" if graphical else ""
+    graphics_handoff = "    set gfxpayload=keep\n" if graphical else ""
     cfg = f"""# ZackOS boot menu.
 set timeout=5
 set default=0
@@ -307,11 +312,11 @@ search --no-floppy --fs-uuid --set=root {fs_uuid}
 terminal_output console
 source /boot/grub/splash.cfg
 
-menuentry "ZackOS" {{
-    linux /boot/{kernel} root=PARTUUID={partuuid} ro console=tty0 console=ttyS0,115200
+menuentry "Start ZackOS" {{
+{graphics_handoff}    linux /boot/{kernel} root=PARTUUID={partuuid} ro{boot_args} console=tty0 console=ttyS0,115200
 }}
 
-menuentry "ZackOS (recovery / single-user)" {{
+menuentry "Recovery shell" {{
     linux /boot/{kernel} root=PARTUUID={partuuid} ro single console=tty0 console=ttyS0,115200
 }}
 """
@@ -412,7 +417,7 @@ def install_wm(choice):
         "nixpkgs.rxvt-unicode",
         "nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
         "nixpkgs.xf86-input-libinput", "nixpkgs.mesa",
-        "nixpkgs.dejavu_fonts",
+        "nixpkgs.dejavu_fonts", "nixpkgs.xrdb", "nixpkgs.adwaita-icon-theme",
         "nixpkgs.feh", "nixpkgs.scrot", "nixpkgs.xdotool", "nixpkgs.xclip",
         "nixpkgs.i3lock", "nixpkgs.dbus", "nixpkgs.xdm", "nixpkgs.firefox", "nixpkgs.thunar",
     ]
@@ -435,7 +440,7 @@ def install_wm(choice):
     # continuing like the old "optional" path did.
     link_nix_bins([
         "i3", "i3bar", "i3status", "xterm", "urxvt", "dmenu", "startx",
-        "Xorg", "xauth", "i3lock", "feh", "scrot", "xdotool", "xclip",
+        "Xorg", "xauth", "xrdb", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
     configure_i3_desktop()
     register_nix_fonts()
@@ -497,6 +502,10 @@ def configure_i3_desktop():
         "#!/bin/sh\n"
         f"export PATH={profile}/bin:/usr/local/bin:/usr/bin:/bin\n"
         f"export XDG_DATA_DIRS={profile}/share:/usr/local/share:/usr/share\n"
+        "export LANG=C.UTF-8\n"
+        'mkdir -p "${XDG_CACHE_HOME:-$HOME/.cache}"\n'
+        "xrdb -nocpp -merge /etc/X11/zackos.Xresources\n"
+        '[ ! -r "$HOME/.Xresources" ] || xrdb -merge "$HOME/.Xresources"\n'
         "exec dbus-run-session -- i3\n"
     )
     session.chmod(0o755)
@@ -621,7 +630,7 @@ export LD_LIBRARY_PATH=/root/.nix-profile/lib:/run/opengl-driver/lib
 exec dbus-run-session -- startplasma-x11
 """
     else:
-        content = "#!/bin/sh\nexport LANG=C.UTF-8\nexec dbus-run-session -- i3\n"
+        content = "#!/bin/sh\nexec /etc/X11/xdm/Xsession\n"
     for rel in ("etc/skel/.xinitrc", "root/.xinitrc"):
         path = os.path.join(TARGET, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -650,115 +659,33 @@ exec dbus-run-session -- startx -- :0 vt7
         os.chmod(helper, 0o755)
 
 def write_i3_config():
-    """Ship a real i3 config (adapted from github.com/TxGVNN/i3-config,
-    per project standing instructions) instead of leaving ~/.config/i3
-    empty.
+    desktop = Path(__file__).with_name("desktop")
+    files = {
+        "i3.conf": ["etc/i3/config", "etc/skel/.config/i3/config", "root/.config/i3/config"],
+        "i3status.conf": ["etc/zackos/i3status.conf"],
+        "Xresources": ["etc/X11/zackos.Xresources"],
+        "orbit.png": ["usr/share/backgrounds/zackos/orbit.png"],
+    }
+    for name, destinations in files.items():
+        for destination in destinations:
+            path = Path(TARGET, destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(desktop / name, path)
+            path.chmod(0o644)
 
-    BUG FIX (2026-08-08): with no config file present, i3 shows its
-    first-run setup wizard every single launch instead of a normal
-    session - confirmed live as the unreadable "unreadable dialog box"
-    the user kept hitting. The upstream TxGVNN config also hardcodes
-    `i3bar_command /usr/bin/i3bar` (nix packages never install to
-    /usr/bin - confirmed live: i3bar/child.c reported binary not found
-    at that literal path even though it was on $PATH) and calls
-    `systemctl poweroff/reboot/suspend/hibernate`, which do not exist on
-    this runit-based, non-systemd system. Adapted here: i3bar resolved
-    via $PATH, i3status instead of the upstream's i3blocks (avoids
-    needing a second custom config file this installer doesn't ship),
-    power/reboot routed through this project's own /sbin/poweroff and
-    /sbin/reboot wrappers (see install_shutdown_wrappers()), and
-    suspend/hibernate dropped (no ACPI sleep support in this build).
-    """
-    config = """# ZackOS i3 config - adapted from github.com/TxGVNN/i3-config
-set $mod Mod4
-
-font pango:DejaVu Sans Mono 10
-floating_modifier $mod
-focus_follows_mouse no
-
-# terminal / launcher
-bindsym $mod+Return exec xterm
-bindsym $mod+b exec firefox
-bindsym $mod+F2 exec thunar
-bindsym $mod+Shift+d exec dmenu_run
-bindsym $mod+Shift+q kill
-bindsym $mod+x border toggle
-
-# focus (vim-style + arrows)
-bindsym $mod+j focus left
-bindsym $mod+k focus down
-bindsym $mod+l focus up
-bindsym $mod+semicolon focus right
-bindsym $mod+Left focus left
-bindsym $mod+Down focus down
-bindsym $mod+Up focus up
-bindsym $mod+Right focus right
-
-# move
-bindsym $mod+Shift+j move left
-bindsym $mod+Shift+k move down
-bindsym $mod+Shift+l move up
-bindsym $mod+Shift+semicolon move right
-
-# layout
-bindsym $mod+h split h
-bindsym $mod+v split v
-bindsym $mod+f fullscreen toggle
-bindsym $mod+s layout stacking
-bindsym $mod+w layout tabbed
-bindsym $mod+e layout toggle split
-bindsym $mod+Shift+space floating toggle
-bindsym $mod+space focus mode_toggle
-bindsym $mod+a focus parent
-
-# workspaces
-bindsym $mod+1 workspace number 1
-bindsym $mod+2 workspace number 2
-bindsym $mod+3 workspace number 3
-bindsym $mod+4 workspace number 4
-bindsym $mod+5 workspace number 5
-bindsym $mod+Shift+1 move container to workspace number 1
-bindsym $mod+Shift+2 move container to workspace number 2
-bindsym $mod+Shift+3 move container to workspace number 3
-bindsym $mod+Shift+4 move container to workspace number 4
-bindsym $mod+Shift+5 move container to workspace number 5
-
-# resize mode
-mode "resize" {
-    bindsym j resize shrink width 5 px or 5 ppt
-    bindsym k resize grow height 5 px or 5 ppt
-    bindsym l resize shrink height 5 px or 5 ppt
-    bindsym semicolon resize grow width 5 px or 5 ppt
-    bindsym Return mode "default"
-    bindsym Escape mode "default"
-}
-bindsym $mod+r mode "resize"
-
-# power menu - routed through our own runit-safe wrappers, no systemd
-mode "(l)ock (r)eboot (p)oweroff (e)xit-i3" {
-    bindsym l exec i3lock -c 2E3440, mode "default"
-    bindsym r exec /sbin/reboot
-    bindsym p exec /sbin/poweroff
-    bindsym e exec i3-msg exit
-    bindsym Return mode "default"
-    bindsym Escape mode "default"
-}
-bindsym $mod+Shift+e mode "(l)ock (r)eboot (p)oweroff (e)xit-i3"
-
-bindsym $mod+Shift+c reload
-bindsym $mod+Shift+r restart
-
-bar {
-    i3bar_command i3bar
-    status_command i3status
-    font pango:DejaVu Sans Mono 10
-}
-"""
-    for rel in ("etc/skel/.config/i3/config", "root/.config/i3/config"):
-        path = os.path.join(TARGET, rel)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(config)
+    gtk = Path(TARGET, "etc/gtk-3.0/settings.ini")
+    gtk.parent.mkdir(parents=True, exist_ok=True)
+    settings = configparser.ConfigParser(interpolation=None)
+    settings.read(gtk)
+    if not settings.has_section("Settings"):
+        settings.add_section("Settings")
+    settings["Settings"].update({
+        "gtk-application-prefer-dark-theme": "true",
+        "gtk-theme-name": "Adwaita-dark",
+        "gtk-icon-theme-name": "Adwaita",
+    })
+    with gtk.open("w") as output:
+        settings.write(output)
 
 
 def link_nix_bins(names, require_all=False):
@@ -828,7 +755,7 @@ def repair_sysv_console():
 
 def install_init(choice, part=None):
     i3_desktop = (Path(TARGET) / "etc/X11/xdm/xdm-config").exists()
-    xdm_command = "/nix/var/nix/profiles/default/bin/xdm -nodaemon -config /etc/X11/xdm/xdm-config"
+    xdm_command = "/usr/local/lib/zackos-installer/desktop/zackos-display"
     if choice == "sysvinit":
         repair_sysv_console()
         if i3_desktop:
@@ -1112,7 +1039,7 @@ def install_shutdown_wrappers():
 
     def _backup(name):
         p = os.path.join(sbin, name)
-        if os.path.exists(p) and not os.path.islink(p):
+        if os.path.isfile(p) and not os.path.islink(p) and not os.path.lexists(p + ".sysvinit"):
             shutil.copy2(p, p + ".sysvinit")
 
     # BUG FIX (2026-08-09): poweroff hung indefinitely (observed live: still
@@ -1149,11 +1076,13 @@ echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
 
     def _write(name, sysrq_char):
         _backup(name)
-        p = os.path.join(sbin, name)
-        with open(p, "w") as f:
-            f.write("#!/bin/sh\n" + stop_services +
-                    f"echo {sysrq_char} > /proc/sysrq-trigger\n")
-        os.chmod(p, 0o755)
+        # On LFS, reboot and poweroff are links to halt. Replace each directory
+        # entry so the poweroff script cannot overwrite the reboot action.
+        path = Path(sbin, name)
+        tmp = path.with_suffix(".zackos-new")
+        tmp.write_text("#!/bin/sh\n" + stop_services + f"echo {sysrq_char} > /proc/sysrq-trigger\n")
+        tmp.chmod(0o755)
+        tmp.replace(path)
 
     _write("reboot", "b")     # SysRq b = immediate reboot
     _write("poweroff", "o")   # SysRq o = power off
@@ -1214,6 +1143,11 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
             create_user(username, user_password or root_password)
         install_init(profile.init, part)
         install_bootloader(disk, part)
+        if profile.desktop == "i3" and username:
+            marker = Path(TARGET, "boot/grub/zackos-first-user")
+            marker.write_text(username + "\n")
+            marker.chmod(0o600)
+            run(["sync"])
     finally:
         cleanup_mounts()
-    log("Install complete! Remove installation media and reboot.")
+    log("Install complete!")

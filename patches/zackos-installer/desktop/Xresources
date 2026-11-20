@@ -1,0 +1,25 @@
+XTerm*faceName: DejaVu Sans Mono
+XTerm*faceSize: 11
+XTerm*internalBorder: 14
+XTerm*background: #10191c
+XTerm*foreground: #f4f4df
+XTerm*cursorColor: #d8ff62
+XTerm*highlightColor: #365d57
+XTerm*highlightTextColor: #f4f4df
+XTerm*scrollBar: false
+XTerm*color0: #18272b
+XTerm*color1: #e78e79
+XTerm*color2: #aad599
+XTerm*color3: #dedb8a
+XTerm*color4: #82b6ce
+XTerm*color5: #c2a3c6
+XTerm*color6: #83c4ae
+XTerm*color7: #d5ddd0
+XTerm*color8: #617879
+XTerm*color9: #ffab90
+XTerm*color10: #d8ff62
+XTerm*color11: #f4eca9
+XTerm*color12: #a9d6e7
+XTerm*color13: #dac1e1
+XTerm*color14: #a6e2cb
+XTerm*color15: #f4f4df

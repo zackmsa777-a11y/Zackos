@@ -24,6 +24,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("disk", type=Path)
     parser.add_argument("--user", default="tester", help="existing unprivileged desktop test account")
+    parser.add_argument("--first-boot", action="store_true",
+                        help="verify the automatic session and its logout before testing XDM")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*", args.user) or args.user == "root":
         parser.error("provide a regular local test account")
@@ -57,6 +59,13 @@ def main():
 
             vm.sendline("export DISPLAY=:0")
             vm.expect(r"# ")
+            if args.first_boot:
+                vm.sendline("export XAUTHORITY=/run/zackos-first-session/server.auth")
+                vm.expect(r"# ")
+                wait_guest(f"pgrep -u {args.user} -x i3 && i3-msg -t get_workspaces "
+                           "&& test ! -e /boot/grub/zackos-first-user")
+                vm.sendline("i3-msg exit")
+                vm.expect(r"# ")
             wait_guest("set -- /var/lib/xdm/authdir/authfiles/A:0-*; "
                        "XAUTHORITY=$1 xdotool search --onlyvisible --name '^xlogin$'")
             vm.sendline("set -- /var/lib/xdm/authdir/authfiles/A:0-*; export XAUTHORITY=$1")

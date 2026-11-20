@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Interactive ZackInstaller for composing an LFS-based ZackOS profile."""
+import argparse
 import getpass
 import os
+from pathlib import Path
+import re
+import subprocess
 import sys
 
 sys.path.insert(0, "/usr/local/lib/zackos-installer")
@@ -31,6 +35,9 @@ def choose(kind, default):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-reboot", action="store_true", help="stay in the live system after installation")
+    args = parser.parse_args()
     print("=" * 68)
     print(" ZackInstaller — compose ZackOS from a common LFS foundation")
     print(" No Debian/Void/Gentoo base is selected; only LFS providers are used.")
@@ -114,8 +121,18 @@ def main():
     if root_password != getpass.getpass("Confirm root password: "):
         print("Passwords do not match. Aborting.")
         sys.exit(1)
-    username = ask("Create a normal user? (leave blank to skip)", "")
-    user_password = getpass.getpass(f"Password for {username}: ") if username else None
+    if desktop == "i3":
+        username = ask("Desktop username (this account opens i3 on first boot)", "zack")
+        if username == "root" or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
+            print("Choose a regular account name using lowercase letters, digits, _ or -.")
+            sys.exit(1)
+        user_password = getpass.getpass(f"Password for {username}: ")
+        if not user_password or user_password != getpass.getpass("Confirm desktop password: "):
+            print("Enter matching, nonempty desktop passwords.")
+            sys.exit(1)
+    else:
+        username = ask("Create a normal user? (leave blank to skip)", "")
+        user_password = getpass.getpass(f"Password for {username}: ") if username else None
 
     print("\nProfile validated. Starting installation...")
     try:
@@ -130,6 +147,15 @@ def main():
     except core.InstallError as exc:
         print(f"\nInstall FAILED: {exc}")
         sys.exit(1)
+
+    live_media = "zackos.live=1" in Path("/proc/cmdline").read_text().split()
+    if desktop == "i3" and live_media and not args.no_reboot:
+        print(f"Restarting into ZackOS. The first i3 session will open as {username}.", flush=True)
+        subprocess.run(["sync"], check=True)
+        if subprocess.run(["/sbin/shutdown", "-r", "now"]).returncode:
+            print("Automatic restart failed. Reboot into the installed disk.")
+    else:
+        print("Boot the installed disk to finish setup.")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,74 @@
+#!/usr/bin/python3
+"""Run the new user's first X11 session once, then supervise the usual XDM login."""
+import os
+from pathlib import Path
+import pwd
+import secrets
+import shutil
+import subprocess
+import sys
+
+BIN = "/nix/var/nix/profiles/default/bin"
+MARKER = Path("/boot/grub/zackos-first-user")
+STATE = Path("/run/zackos-first-session")
+SESSION = "/etc/X11/xdm/Xsession"
+XDM = [f"{BIN}/xdm", "-nodaemon", "-config", "/etc/X11/xdm/xdm-config"]
+
+
+def account(name):
+    user = pwd.getpwnam(name)
+    if user.pw_uid < 1000 or user.pw_uid == 65534:
+        raise ValueError("first session requires a regular desktop user")
+    return user
+
+
+def start_client(name):
+    user = account(name)
+    os.initgroups(user.pw_name, user.pw_gid)
+    os.setgid(user.pw_gid)
+    os.setuid(user.pw_uid)
+    os.chdir(user.pw_dir)
+    os.execve(SESSION, [SESSION], {
+        "DISPLAY": ":0", "XAUTHORITY": str(STATE / "client.auth"),
+        "USER": name, "LOGNAME": name, "HOME": user.pw_dir,
+        "SHELL": user.pw_shell, "LANG": "C.UTF-8",
+        "PATH": f"{BIN}:/usr/local/bin:/usr/bin:/bin",
+    })
+
+
+def start_display():
+    subprocess.run(["/usr/local/lib/zackos-installer/boot/splash-done"], check=False)
+    # Xinit exits at logout. The supervising init calls us again to start XDM.
+    if STATE.exists():
+        shutil.rmtree(STATE)
+    if MARKER.exists():
+        name = MARKER.read_text().strip()
+        MARKER.unlink()
+        try:
+            user = account(name)
+            STATE.mkdir(mode=0o711)
+            # xinit and Xorg use a root-owned authority file. The first client
+            # gets a separate cookie file, readable only by its desktop user.
+            STATE.chmod(0o711)
+            server = STATE / "server.auth"
+            client = STATE / "client.auth"
+            server.touch(mode=0o600)
+            subprocess.run([f"{BIN}/xauth", "-q", "-f", str(server)],
+                           input=f"add :0 . {secrets.token_hex(16)}\n", text=True, check=True)
+            client.touch(mode=0o600)
+            shutil.copyfile(server, client)
+            os.chown(client, user.pw_uid, user.pw_gid)
+            os.environ["XAUTHORITY"] = str(server)
+            cmd = [f"{BIN}/xinit", os.path.abspath(__file__), "--first-client", name,
+                   "--", f"{BIN}/Xorg", ":0", "vt7", "-nolisten", "tcp", "-auth", str(server)]
+            os.execv(cmd[0], cmd)
+        except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+            print(f"First desktop session could not start: {exc}", file=sys.stderr, flush=True)
+    os.execv(XDM[0], XDM)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--first-client":
+        start_client(sys.argv[2])
+    else:
+        start_display()

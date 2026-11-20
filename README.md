@@ -31,7 +31,9 @@ Boot-verified end to end: reaches a real login prompt, logs in, gives you a work
 For a persistent i3 desktop, boot the i3 installer ISO with 4 GiB of RAM,
 VirtIO graphics, and a 24 GiB virtual disk. Log in to the installer as
 `root` with password `zackos` and run `zackinstall`. The desktop install
-downloads Firefox, Thunar and the X11 packages from Nix. See the
+downloads Firefox, Thunar and the X11 packages from Nix. On success the
+installer reboots into the new user’s i3 desktop. The disk boots through
+a themed GRUB menu and an animated ZackOS splash. See the
 [installer and QEMU instructions](patches/zackos-installer/README.md).
 
 Older live images have different download, login and persistence instructions.

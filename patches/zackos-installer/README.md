@@ -17,17 +17,12 @@ Handbook style) documenting the same steps by hand, for people who'd
 rather run the commands themselves than go through the script.
 
 ## Key bugs fixed in core.py (both found via real QEMU boot testing)
-1. **GRUB gfxterm hang**: `grub-mkconfig`'s auto-generated grub.cfg defaults
-   to `terminal_output gfxterm` (graphical framebuffer), which renders
-   nothing over a serial console (`-nographic`) and caused real boot hangs.
-   Fix: `write_grub_cfg()` hand-writes a minimal grub.cfg with plain
-   `terminal_output console` instead of trusting grub-mkconfig.
-2. **Unstable root device naming**: hardcoding `root=/dev/vdb1` (the device
-   name seen AT INSTALL TIME) breaks if the disk gets a different name at
-   boot (e.g. installed with 2 disks attached -> vdb, booted standalone
-   with 1 disk -> vda) -> kernel panic "VFS: Unable to mount root fs on
-   unknown-block". Fix: use `root=UUID=<uuid>` instead, which is stable
-   regardless of enumeration order.
+1. **Serial boot menu.** GRUB starts with its console available, enables the
+   graphical theme when video initialization succeeds, and also presents the
+   choices over a 115200-baud serial port.
+2. **Stable root device.** GRUB finds the filesystem by UUID. The kernel
+   uses the partition's PARTUUID, which it can resolve without an installed
+   initramfs.
 
 Both fixes verified end-to-end: full install via `zackinstall`
 using a 2-disk QEMU setup (persistence disk + blank install target), then
@@ -44,31 +39,50 @@ GRUB and i3. The installer checks HTTPS access to the Nix cache before
 partitioning. On failure it offers proxy configuration, retry, or an offline
 SysV console. Confirm only the VM disk you intend to erase.
 
-After installation, shut down the live VM and run `./qemu-i3.sh zackos.qcow2`
-to boot from disk. Sign in to the XDM graphical login to start i3. Use Super+F2nter for a terminal,
-Super+B for Firefox, and Super+F2 for Thunar. The serial console remains
-available for maintenance. On the installed runit system, use
-`setsid -f /sbin/poweroff </dev/null >/dev/null 2>&1` when shutting down
-from the serial console so stopping getty leaves the shutdown process running.
+The QEMU profile uses x86-64, legacy BIOS, two vCPUs, 4 GiB RAM, and
+VirtIO graphics. Select a regular username and password when prompted. A
+successful live i3 installation restarts the machine and opens i3 as that
+user once. After logout and on subsequent boots, use the XDM graphical
+sign-in. Use `zackinstall --no-reboot` to control the restart yourself.
 
-To rebuild the i3 release ISO, run `./remaster-iso.sh v5.7.iso ZackOS-i3.iso`
-from the release checkout. The script checks the base ISO digest and requires
-xorriso, cpio, gzip, and Python 3. For a full kernel and base rebuild, use
-`build_installer_iso.sh` instead. To smoke-test a powered-off install, run
-`python3 test-i3-boot.py zackos.qcow2`. The test requires pexpect and QEMU,
-uses an installed regular account (default `tester`, selectable with `--user`),
-boots a temporary snapshot without installer media, and checks the local
-desktop and a terminal PTY.
+The **Start ZackOS** disk entry loads Linux and displays the logo with a
+white Pac-Man eating dots in both directions while services start. Xorg
+takes over when it is ready. The loader uses the first connected Linux KMS
+display it can initialize. The installer console and the **Recovery shell**
+entry keep text output available.
+
+The i3 desktop includes the orbital wallpaper, a CPU/memory/clock status
+bar, themed XTerm and dmenu, and named workspaces. The Super key controls
+these shortcuts.
+
+| Shortcut | Action |
+| --- | --- |
+| Super + Enter | Open a terminal |
+| Super + D | Open the application launcher |
+| Super + B | Start Firefox |
+| Super + F2 | Open Thunar |
+| Super + 1–5 | Switch workspace |
+
+To boot the disk later, run `./qemu-i3.sh zackos.qcow2`. From the serial
+console, `setsid -f /sbin/poweroff </dev/null >/dev/null 2>&1` lets
+shutdown finish while runit stops the getty.
+
+Rebuild from the verified v5.7 base using
+`./remaster-iso.sh v5.7.iso ZackOS-i3.iso`. Install xorriso, cpio, gzip,
+a native x86-64 C compiler, pkg-config, and the static libdrm, libpng and
+zlib development libraries. The full kernel/base builder is
+`build_installer_iso.sh`. To test a powered-off disk in a disposable
+snapshot, run `python3 test-i3-boot.py zackos.qcow2 --user zack`. For a
+fresh installation whose first session has yet to start, add `--first-boot`
+to verify automatic entry and the return to XDM on logout.
 
 ## Boot artwork
 
-The installer and installed disk display the ZackOS logo during the five-second
-GRUB timeout on supported BIOS graphics. Press Escape during the splash to
-open the menu. GRUB uses the PNG at boot, and the installed SVG is available
-at `/usr/share/pixmaps/zackos.svg`.
-
-To update the artwork, edit `branding/zackos.svg` and regenerate the PNG from
-this directory before rebuilding the ISO.
+Edit `branding/zackos.svg` to change the logo. The installed vector is at
+`/usr/share/pixmaps/zackos.svg`. Recreate the desktop wallpaper and GRUB
+background with `python3 branding/render-artwork.py` using Pillow, NumPy,
+Inkscape and DejaVu Sans Mono. Recreate the Linux splash image with the
+commands below. The Pac-Man frames are drawn by `boot/splash.c`.
 
 ```sh
 inkscape branding/zackos.svg -o /tmp/zackos-logo.png

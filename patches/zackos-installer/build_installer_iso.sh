@@ -8,7 +8,7 @@ INSTALLER_SRC=$(cd "$(dirname "$0")" && pwd)
 echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
 
 mkdir -p "$WORK"
 cd "$WORK"
@@ -39,6 +39,7 @@ mkdir -p initrd_work
 zcat iso_layout/boot/initramfs.img | (cd initrd_work && cpio -idm --quiet)
 cp "$INSTALLER_SRC/../live-boot/zack-live-init.sh" initrd_work/init
 chmod +x initrd_work/init
+"$INSTALLER_SRC/package-installer.sh" "$WORK/initrd_work/zackinstaller"
 (cd initrd_work && find . -print | cpio -o -H newc --quiet | gzip -9) > iso_layout/boot/initramfs.img
 
 echo "=== [5/9] prep chroot (dev nodes, resolv.conf, installer files) ==="
@@ -59,10 +60,8 @@ NIX_STORE_PATH=$(find nix/store -maxdepth 1 -iname "*-nix-2.35.1" | head -1)
 ln -sf "/${NIX_STORE_PATH}/bin/nix" proc/self/exe
 cp /etc/resolv.conf etc/resolv.conf
 mkdir -p usr/local/lib/zackos-installer usr/local/bin
-cp -r "$INSTALLER_SRC/branding" usr/local/lib/zackos-installer/
-cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos-installer/
-cp -a "$INSTALLER_SRC"/providers usr/local/lib/zackos-installer/
-cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
+cp -R "$WORK/initrd_work/zackinstaller/." usr/local/lib/zackos-installer/
+cp "$INSTALLER_SRC/zackinstall" usr/local/bin/
 chmod +x usr/local/bin/zackinstall
 # Testing-only live login so QEMU/serial verification can reach ZackInstall.
 # Installed systems still receive the password selected in ZackInstall.
@@ -169,8 +168,9 @@ cp iso_layout/boot/vmlinuz iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*vm
 cp iso_layout/boot/initramfs.img iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*initramfs* iso_final/boot/ 2>/dev/null || true
 ls iso_layout/boot/
 cp squash_installer.img iso_final/squash.img
-cp "$INSTALLER_SRC"/branding/splash.{cfg,png} iso_final/boot/grub/
-{ echo 'source /boot/grub/splash.cfg'; cat iso_layout/boot/grub/grub.cfg; } > iso_final/boot/grub/grub.cfg
+cp "$INSTALLER_SRC/branding/splash.cfg" iso_final/boot/grub/
+cp -R "$INSTALLER_SRC/branding/grub" iso_final/boot/grub/zackos
+cp "$INSTALLER_SRC/branding/live.cfg" iso_final/boot/grub/grub.cfg
 grub-mkrescue -o zackos_installer.iso iso_final > /dev/null 2>&1
 echo "=== [9/9] done ==="
 ls -la zackos_installer.iso
