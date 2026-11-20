@@ -417,7 +417,7 @@ def install_wm(choice):
         "nixpkgs.rxvt-unicode",
         "nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
         "nixpkgs.xf86-input-libinput", "nixpkgs.mesa",
-        "nixpkgs.dejavu_fonts", "nixpkgs.xrdb", "nixpkgs.adwaita-icon-theme",
+        "nixpkgs.dejavu_fonts", "nixpkgs.inter", "nixpkgs.xrdb", "nixpkgs.adwaita-icon-theme",
         "nixpkgs.feh", "nixpkgs.scrot", "nixpkgs.xdotool", "nixpkgs.xclip",
         "nixpkgs.i3lock", "nixpkgs.dbus", "nixpkgs.xdm", "nixpkgs.firefox", "nixpkgs.thunar",
     ]
@@ -442,6 +442,11 @@ def install_wm(choice):
         "i3", "i3bar", "i3status", "xterm", "urxvt", "dmenu", "startx",
         "Xorg", "xauth", "xrdb", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
+    # Nix's build hooks use bash process substitution on the LFS devtmpfs.
+    panel = chroot_run(export + "if ! test -e /dev/fd; then ln -s /proc/self/fd /dev/fd; fi; "
+                       "nix-env -f /usr/local/lib/zackos-installer/desktop/panel/runtime.nix -i")
+    if panel.returncode:
+        raise InstallError("Failed to install the ZackOS panel and application launcher")
     configure_i3_desktop()
     register_nix_fonts()
 

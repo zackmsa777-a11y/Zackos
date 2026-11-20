@@ -77,7 +77,28 @@ def main():
                 time.sleep(1)
                 send_keys(monitor, local_password + "\n")
                 wait_guest(f"pgrep -u {args.user} -x i3 && i3-msg -t get_version")
-                for key in ("meta_l-ret", "meta_l-f2", "meta_l-b"):
+                wait_guest("xdotool search --onlyvisible --name '^ZackOS Panel$'")
+                monitor.sendall(b"sendkey meta_l-d 75\n")
+                wait_guest("xdotool search --onlyvisible --name '^ZackOS Applications$'")
+                send_keys(monitor, "xterm\n")
+                wait_guest("xdotool search --onlyvisible --class XTerm")
+                vm.sendline('panel=$(xdotool search --onlyvisible --name "^ZackOS Panel$" | head -1); '
+                            'xdotool mousemove --window "$panel" 30 20 click 1')
+                vm.expect(r"# ")
+                wait_guest("xdotool search --onlyvisible --name '^ZackOS Applications$'")
+                monitor.sendall(b"sendkey esc 75\n")
+                wait_guest("! xdotool search --onlyvisible --name '^ZackOS Applications$'")
+                # A restarted i3 can advertise a different IPC socket to the same dock.
+                vm.sendline("i3-msg restart")
+                vm.expect(r"# ")
+                wait_guest("i3-msg -t get_version")
+                vm.sendline("i3-msg 'workspace number 2:web'")
+                vm.expect(r"# ")
+                wait_guest('panel=$(xdotool search --onlyvisible --name "^ZackOS Panel$" | head -1); '
+                           'xdotool mousemove --window "$panel" 138 20 click 1 && '
+                           'i3-msg -t get_workspaces | python3 -c \'import json,sys; '
+                           'sys.exit(not any(w["focused"] and w["num"] == 1 for w in json.load(sys.stdin)))\'')
+                for key in ("meta_l-f2", "meta_l-b"):
                     monitor.sendall(f"sendkey {key} 75\n".encode())
                     time.sleep(1)
             wait_guest(f"ps -u {args.user} -o tty=,comm= | grep -E 'pts/[0-9]+ +bash' "

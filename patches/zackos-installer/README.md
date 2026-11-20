@@ -51,14 +51,18 @@ takes over when it is ready. The loader uses the first connected Linux KMS
 display it can initialize. The live installer keeps the BIOS text console active for a local
 monitor and keyboard. The GRUB menu also offers a recovery entry.
 
-The i3 desktop includes the orbital wallpaper, a CPU/memory/clock status
-bar, themed XTerm and dmenu, and named workspaces. The Super key controls
-these shortcuts.
+The top panel has an **Apps** button, clickable workspaces with a sliding
+selection, the focused window title, live CPU history, memory usage and a
+clock. Click **Apps** or press Super+D, type part of an application's name,
+and press Enter to open it. Escape or a click outside closes the menu.
+The menu includes visible XDG desktop entries for the system and user.
+The animations follow GTK’s `gtk-enable-animations` setting.
 
 | Shortcut | Action |
 | --- | --- |
 | Super + Enter | Open a terminal |
-| Super + D | Open the application launcher |
+| Super + D | Open or close the application launcher |
+| Super + Shift + D | Run a command with dmenu |
 | Super + B | Start Firefox |
 | Super + F2 | Open Thunar |
 | Super + 1–5 | Switch workspace |
