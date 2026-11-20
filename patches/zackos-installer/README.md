@@ -1,20 +1,24 @@
 # ZackOS Installer
 
-Source for the ZackOS installer, meant to be dropped into the live
-environment at:
-- `/usr/local/lib/zackos-installer/{core,zackinstall}.py`
-- `/usr/local/bin/zackinstall` (the installer entrypoint)
+Boot **Try or install ZackOS** to open the graphical installer inside i3 as
+the local account `live`. Choose **Try ZackOS** to explore the desktop.
+Open **Apps → Install ZackOS** to return to setup.
 
-## One installer: ZackInstall
-The old "Easy" (archinstall-style TUI) tier has been removed. ZackInstall
-(`zackinstall.py`) is now the only installer ZackOS ships: every command
-`core.run()` executes is echoed to the terminal before it runs, full
-control over WM/init/disk/hostname/user, plain sequential Q&A, no curses.
+Choose a destination disk, a desktop and init system, then enter the computer
+name and passwords for your desktop account and root. Review the destination
+and select **Erase all data** to enable **Install ZackOS**. Setup excludes
+the boot device, mounted disks, and labeled persistence volumes. It checks
+the selected device again immediately before partitioning. The default i3
+installation uses packages from the ISO and works offline.
 
-Once ZackInstall is confirmed solid end-to-end, the plan is to also
-publish a copy-paste, wiki-style install guide (Arch Wiki / Gentoo
-Handbook style) documenting the same steps by hand, for people who'd
-rather run the commands themselves than go through the script.
+The GTK window runs as the live user. A local service performs the disk
+operations and reports progress. Reopening the installer brings back the
+current operation. The installed system comes from the original read-only
+image, so live-session accounts, files and settings stay on the live media.
+
+**Text installer** in GRUB opens the console workflow. Log in as `root` with
+the live password `zackos` and run `zackinstall`. Both interfaces use the
+same installation code and support i3, Plasma X11 and console profiles.
 
 ## Key bugs fixed in core.py (both found via real QEMU boot testing)
 1. **Serial boot menu.** GRUB starts with its console available, enables the
@@ -31,25 +35,21 @@ working GRUB menu and successful `switch_root`/kernel boot.
 
 ## Install and boot i3 in QEMU
 
-Use the installer ISO from the i3 desktop release. With QEMU installed, run
-`./qemu-i3.sh zackos.qcow2 ZackOS-i3.iso` from this directory. It creates a
-24 GiB disk if needed. Log in to the live system as `root` with password
-`zackos` and run `zackinstall`. The default profile is glibc, Nix, runit,
-GRUB and i3. The installer checks HTTPS access to the Nix cache before
-partitioning. On failure it offers proxy configuration, retry, or an offline
-SysV console. Confirm only the VM disk you intend to erase.
+With QEMU installed, run `./qemu-i3.sh zackos.qcow2 ZackOS-i3.iso`
+from this directory. It creates a 24 GiB disk if needed. The VM uses x86-64
+BIOS, two vCPUs, 4 GiB RAM and VirtIO graphics.
 
-The QEMU profile uses x86-64, legacy BIOS, two vCPUs, 4 GiB RAM, and
-VirtIO graphics. Select a regular username and password when prompted. A
-successful live i3 installation restarts the machine and opens i3 as that
-user once. After logout and on subsequent boots, use the XDM graphical
-sign-in. Use `zackinstall --no-reboot` to control the restart yourself.
+The graphical default installs glibc, Nix, runit, GRUB and i3. With automatic
+restart enabled on the review screen, setup displays a 20-second countdown
+after success. **Stay in live session** cancels that restart. The installed
+disk opens i3 once as the account you created. XDM handles subsequent sign-ins.
+Plasma X11 and the console with runit require access to the Nix cache.
+For a console-mode installation, `zackinstall --no-reboot` keeps the live session open.
 
 The **Start ZackOS** disk entry loads Linux and displays the logo with a
 white Pac-Man eating dots in both directions while services start. Xorg
 takes over when it is ready. The loader uses the first connected Linux KMS
-display it can initialize. The live installer keeps the BIOS text console active for a local
-monitor and keyboard. The GRUB menu also offers a recovery entry.
+display it can initialize. The text installer uses the BIOS console for its local monitor and keyboard. The GRUB menu also offers a recovery entry.
 
 The top panel has an **Apps** button, clickable workspaces with a sliding
 selection, the focused window title, live CPU history, memory usage and a
@@ -71,11 +71,39 @@ To boot the disk later, run `./qemu-i3.sh zackos.qcow2`. From the serial
 console, `setsid -f /sbin/poweroff </dev/null >/dev/null 2>&1` lets
 shutdown finish while runit stops the getty.
 
-Rebuild from the verified v5.7 base using
-`./remaster-iso.sh v5.7.iso ZackOS-i3.iso`. Install xorriso, cpio, gzip,
-a native x86-64 C compiler, pkg-config, and the static libdrm, libpng and
-zlib development libraries. The full kernel/base builder is
-`build_installer_iso.sh`. To test a powered-off disk in a disposable
+## Build the graphical ISO
+
+Use an x86-64 Linux build machine with Nix, the intended nixpkgs channel and
+`tar2sqfs` from squashfs-tools-ng. The following commands create a compressed
+desktop package set, then add it and the graphical installer to the verified
+v5.7 BIOS ISO.
+
+```sh
+./live/build-desktop.sh desktop.img
+./remaster-iso.sh v5.7.iso ZackOS-i3.iso desktop.img
+```
+
+For a release built from an existing stock ZackOS i3 installation, pass
+`/nix/var/nix/profiles/default` as the second argument to `build-desktop.sh`.
+The exporter reads the immutable Nix dependency closure and its registration
+records. To build on two machines, pipe `live/export-desktop.sh` from the
+Nix machine into `tar2sqfs -q -s -c gzip desktop.img` on the packaging host.
+With two arguments, `remaster-iso.sh` builds the desktop image automatically.
+Pass `--console-only` as its third argument to produce the small text installer.
+
+Remastering requires xorriso, cpio, gzip, an x86-64 C compiler, pkg-config,
+and static libdrm, libpng and zlib development libraries. For a full
+kernel/base rebuild, set `ZACKOS_DESKTOP_IMAGE` to the absolute desktop image
+path when running `build_installer_iso.sh`.
+
+Run the offline live-session check with
+
+```sh
+python3 test-live-installer.py ZackOS-i3.iso --screenshot installer.png
+```
+
+This captures the installer from the live user’s X session using scrot.
+To test a powered-off disk in a disposable
 snapshot, run `python3 test-i3-boot.py zackos.qcow2 --user zack`. For a
 fresh installation whose first session has yet to start, add `--first-boot`
 to verify automatic entry and the return to XDM on logout.

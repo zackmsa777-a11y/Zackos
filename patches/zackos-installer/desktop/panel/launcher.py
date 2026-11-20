@@ -6,7 +6,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 from panelbar import Glyph, HEIGHT, Motion, label, styled
 
-PREFERRED = ("firefox.desktop", "thunar.desktop", "xterm.desktop")
+PREFERRED = ("org.zackos.Installer.desktop", "firefox.desktop", "thunar.desktop", "xterm.desktop")
 FALLBACK = {
     "firefox.desktop": ("Web browser", "web-browser-symbolic", "web"),
     "thunar.desktop": ("File manager", "folder", "files"),

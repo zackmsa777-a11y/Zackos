@@ -8,7 +8,7 @@ INSTALLER_SRC=$(cd "$(dirname "$0")" && pwd)
 echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools squashfs-tools-ng xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
 
 mkdir -p "$WORK"
 cd "$WORK"
@@ -131,6 +131,7 @@ if [ ! -d "linux-$KVER" ]; then
 fi
 cd "linux-$KVER"
 cp "$INSTALLER_SRC/../kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
+scripts/config --enable SQUASHFS --enable SQUASHFS_ZLIB --enable OVERLAY_FS --enable ISO9660_FS --enable BLK_DEV_LOOP --enable DRM_VIRTIO_GPU
 make olddefconfig > /dev/null
 make -j"$(nproc)" > "$WORK/kernel_build.log" 2>&1
 test -f arch/x86/boot/bzImage || { echo "FATAL: kernel build failed, see $WORK/kernel_build.log"; exit 1; }
@@ -171,6 +172,13 @@ cp squash_installer.img iso_final/squash.img
 cp "$INSTALLER_SRC/branding/splash.cfg" iso_final/boot/grub/
 cp -R "$INSTALLER_SRC/branding/grub" iso_final/boot/grub/zackos
 cp "$INSTALLER_SRC/branding/live.cfg" iso_final/boot/grub/grub.cfg
+if [ "${ZACKOS_CONSOLE_ONLY:-0}" != 1 ]; then
+  if [ -n "${ZACKOS_DESKTOP_IMAGE:-}" ]; then
+    cp "$ZACKOS_DESKTOP_IMAGE" iso_final/desktop.img
+  else
+    "$INSTALLER_SRC/live/build-desktop.sh" iso_final/desktop.img
+  fi
+fi
 grub-mkrescue -o zackos_installer.iso iso_final > /dev/null 2>&1
 echo "=== [9/9] done ==="
 ls -la zackos_installer.iso

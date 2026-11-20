@@ -125,6 +125,7 @@ def render(size, menu, logo, destination):
 if __name__=="__main__":
     with tempfile.TemporaryDirectory() as tmp:
         logo = wordmark(Path(tmp))
+        logo.resize((360, round(360*logo.height/logo.width)), Image.Resampling.LANCZOS).save(HERE/"wordmark.png")
         render((1600,1000),False,logo,HERE.parent/"desktop/orbit.png")
         render((1024,768),True,logo,HERE/"grub/menu.png")
     # Nine-slice selection remains crisp at every GRUB resolution.

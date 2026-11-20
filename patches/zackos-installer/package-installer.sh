@@ -6,6 +6,8 @@ dst=${1:?installer payload directory}
 mkdir -p "$dst/providers" "$dst/boot"
 cp "$src"/core.py "$src"/zackinstall.py "$src"/zackinstall "$dst/"
 cp "$src"/providers/*.py "$dst/providers/"
+mkdir -p "$dst/live"
+cp "$src"/live/*.py "$src"/live/*.css "$src"/live/*.desktop "$dst/live/"
 cp -R "$src/branding" "$src/desktop" "$dst/"
 cp "$src/boot/installed-init" "$src/boot/splash-done" "$dst/boot/"
 "$src/boot/build-splash.sh" "$dst/boot/zack-splash"

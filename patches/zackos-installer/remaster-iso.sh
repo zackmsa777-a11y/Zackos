@@ -8,6 +8,16 @@ src=$(cd "$(dirname "$0")" && pwd)
 echo "414a7c4ddaaa10c95444c48534468d8250dea761718b7b88089595180de70c61  $base" | sha256sum -c -
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+desktop=${3:-}
+map_desktop=()
+if [[ $desktop != --console-only ]]; then
+    if [[ -z $desktop ]]; then
+        desktop="$work/desktop.img"
+        "$src/live/build-desktop.sh" "$desktop"
+    fi
+    test -s "$desktop"
+    map_desktop=(-map "$(realpath "$desktop")" /desktop.img)
+fi
 cd "$work"
 xorriso -osirrox on -indev "$base" -extract /boot/initramfs.img initrd
 chmod u+w initrd
@@ -17,7 +27,7 @@ cp "$src/../live-boot/zack-live-init.sh" overlay/init
 chmod 755 overlay/init
 (cd overlay && find . -print0 | cpio --null --quiet -o -H newc --owner=0:0 | gzip -n) >> initrd
 xorriso -indev "$base" -outdev "$work/output.iso" -boot_image any replay \
-    -map initrd /boot/initramfs.img -map "$src/branding/live.cfg" /boot/grub/grub.cfg \
+    "${map_desktop[@]}" -map initrd /boot/initramfs.img -map "$src/branding/live.cfg" /boot/grub/grub.cfg \
     -map "$src/branding/splash.cfg" /boot/grub/splash.cfg \
     -map "$src/branding/grub" /boot/grub/zackos -commit
 mv "$work/output.iso" "$out"

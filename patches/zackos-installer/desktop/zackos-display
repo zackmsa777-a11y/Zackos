@@ -36,14 +36,15 @@ def start_client(name):
     })
 
 
-def start_display():
+def start_display(live=False):
     subprocess.run(["/usr/local/lib/zackos-installer/boot/splash-done"], check=False)
     # Xinit exits at logout. The supervising init calls us again to start XDM.
     if STATE.exists():
         shutil.rmtree(STATE)
-    if MARKER.exists():
-        name = MARKER.read_text().strip()
-        MARKER.unlink()
+    if live or MARKER.exists():
+        name = "live" if live else MARKER.read_text().strip()
+        if not live:
+            MARKER.unlink()
         try:
             user = account(name)
             STATE.mkdir(mode=0o711)
@@ -64,6 +65,8 @@ def start_display():
             os.execv(cmd[0], cmd)
         except (KeyError, OSError, ValueError, subprocess.CalledProcessError) as exc:
             print(f"First desktop session could not start: {exc}", file=sys.stderr, flush=True)
+    if live:
+        raise SystemExit("The live X11 session could not start")
     os.execv(XDM[0], XDM)
 
 
@@ -71,4 +74,4 @@ if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "--first-client":
         start_client(sys.argv[2])
     else:
-        start_display()
+        start_display(live=sys.argv[1:] == ["--live"])

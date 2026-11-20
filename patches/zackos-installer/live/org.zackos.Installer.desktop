@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Install ZackOS
+GenericName=System installer
+Comment=Install ZackOS from the live desktop
+Icon=/usr/local/lib/zackos-installer/branding/wordmark.png
+Exec=/usr/local/bin/zackos-install
+Terminal=false
+Categories=System;
+Keywords=install;system;setup;disk;
+StartupWMClass=ZackInstaller

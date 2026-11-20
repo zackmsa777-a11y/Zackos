@@ -54,7 +54,7 @@ def main():
         print(f"Invalid profile: {exc}")
         sys.exit(1)
 
-    while desktop != "none" or init == "runit":
+    while (desktop != "none" or init == "runit") and not core.bundled_desktop(InstallerProfile(desktop=desktop)):
         try:
             core.check_package_cache()
             break

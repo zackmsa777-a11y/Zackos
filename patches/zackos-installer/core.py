@@ -5,6 +5,8 @@ Designed to run from within the booted live environment (real kernel,
 real mount()/chroot() available - this is NOT the build sandbox).
 """
 import configparser
+import fcntl
+import json
 import os
 import re
 import subprocess
@@ -57,14 +59,14 @@ def wait_for_network(host="cache.nixos.org", attempts=15, delay=2):
     return False
 
 
-def run(cmd, check=True, input_text=None, capture=False):
+def run(cmd, check=True, input_text=None, capture=False, stdin=None):
     """Run a shell command, echoing it first (manual-mode transparency)."""
     if isinstance(cmd, list):
         printable = " ".join(cmd)
     else:
         printable = cmd
     log(f"$ {printable}")
-    kwargs = {}
+    kwargs = {"stdin": stdin}
     if input_text is not None:
         kwargs["input"] = input_text.encode()
     if capture:
@@ -79,46 +81,40 @@ def run(cmd, check=True, input_text=None, capture=False):
     return result
 
 
-def list_disks():
-    """Return list of (device, size_human, model) for real installable disks."""
+def disk_inventory():
+    """Offer writable whole disks with no mounted, live-media or persistence volumes."""
+    columns = "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,MAJ:MIN,RO,LABEL,FSTYPE,MOUNTPOINTS"
+    tree = json.loads(subprocess.check_output(["lsblk", "--json", "--bytes", "-o", columns]))
+
+    def in_use(node):
+        return (node.get("label") == "ZACKPERSIST" or node.get("fstype") == "iso9660"
+                or any(node.get("mountpoints") or []) or
+                any(in_use(child) for child in node.get("children", [])))
+
     disks = []
-    for entry in sorted(os.listdir("/sys/block")):
-        if re.match(r"^(sd|vd|nvme|hd|xvd)", entry):
-            dev = f"/dev/{entry}"
-            size_path = f"/sys/block/{entry}/size"
-            model_path = f"/sys/block/{entry}/device/model"
-            try:
-                sectors = int(open(size_path).read().strip())
-                size_gb = sectors * 512 / (1024 ** 3)
-            except Exception:
-                size_gb = 0
-            try:
-                model = open(model_path).read().strip()
-            except Exception:
-                model = "Unknown"
-            disks.append((dev, f"{size_gb:.1f}G", model))
+    for node in tree["blockdevices"]:
+        if node["type"] != "disk" or node["ro"] or not node["size"] or in_use(node):
+            continue
+        name = node["name"]
+        if not re.fullmatch(r"(?:sd|vd|xvd|hd)[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+", name):
+            continue
+        seq = Path("/sys/class/block", name, "diskseq")
+        identity = [node["maj:min"], node["size"], node["serial"] or "", seq.read_text().strip() if seq.exists() else ""]
+        fallback = "VirtIO disk" if name.startswith("vd") else "Storage disk"
+        disks.append({"path": node["path"], "bytes": node["size"], "model": (node["model"] or "").strip() or fallback,
+                      "identity": identity})
     return disks
 
 
-def is_persistence_disk(disk):
-    """Return True only for the explicitly labeled live persistence disk."""
-    try:
-        out = subprocess.check_output(
-            ["blkid", "-s", "LABEL", "-o", "value", disk],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-        return out == "ZACKPERSIST"
-    except Exception:
-        return False
+def list_disks():
+    return [(d["path"], f'{d["bytes"] / 1024**3:.1f}G', d["model"]) for d in disk_inventory()]
 
 
-def partition_disk(disk):
-    """Wipe target disk, create a single bootable primary ext4 partition."""
-    if is_persistence_disk(disk):
-        raise InstallError(
-            f"Refusing to wipe {disk}: it is labeled ZACKPERSIST. "
-            "Choose the separate installation target disk."
-        )
+def partition_disk(disk, identity=None):
+    """Recheck the actual device immediately before writing its partition table."""
+    choice = next((d for d in disk_inventory() if d["path"] == disk), None)
+    if choice is None or (identity is not None and choice["identity"] != identity):
+        raise InstallError("The selected disk changed or is in use. Select an available disk again.")
     run(f"wipefs -a {disk}", check=False)
     sfdisk_script = "label: dos\nstart=2048, type=83, bootable\n"
     run(["sfdisk", disk], input_text=sfdisk_script)
@@ -140,60 +136,78 @@ def mount_target(part):
     run(f"mount {part} {TARGET}")
 
 
-def check_disk_space(excludes):
-    """Rough preflight check that the target has enough room for the copy.
-    NOTE: deliberately NOT using `du -x`/--one-file-system here. On this
-    live system's overlayfs root, unmodified files are still backed by the
-    lower (squashfs) device while copied-up files are backed by the upper
-    (tmpfs) device, so `-x` silently excludes almost everything and
-    undercounts to ~0. The excludes list already covers every other real
-    mount in this live environment (proc/sys/dev/tmp/run/mnt/media), so a
-    plain `du -s` over `/` gives the same effective total tar will copy.
-    """
-    du_excludes = " ".join(f"--exclude={e}" for e in excludes)
-    result = subprocess.run(
-        f"du -s {du_excludes} --block-size=1 /", shell=True,
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-    )
-    try:
-        needed_bytes = int(result.stdout.decode().split()[0])
-    except Exception:
-        log("Warning: could not estimate required disk space, skipping preflight check.")
-        return
-    needed_gb = needed_bytes / (1024 ** 3)
-    st = os.statvfs(TARGET)
-    free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
-    log(f"Space check: need ~{needed_gb:.2f}G, target has {free_gb:.2f}G free.")
-    if free_gb < needed_gb * 1.15:
-        raise InstallError(
-            f"Not enough space on target: need ~{needed_gb:.2f}G (+headroom), "
-            f"only {free_gb:.2f}G free. Use a larger disk and try again."
-        )
+MEDIA_BASE = Path("/mnt/zackos-base")
+MEDIA_DESKTOP = Path("/mnt/zackos-desktop")
+MEDIA_INFO = MEDIA_DESKTOP / "usr/local/share/zackos-media"
+
+
+def bundled_desktop(profile):
+    return profile.desktop == "i3" and MEDIA_DESKTOP.is_mount() and (MEDIA_INFO / "registration").is_file()
+
+
+def check_capacity(disk, bundled):
+    sources = [str(MEDIA_BASE) if MEDIA_BASE.is_mount() else "/"]
+    if bundled:
+        sources.append(str(MEDIA_DESKTOP / "nix/store"))
+    info = next((d for d in disk_inventory() if d["path"] == disk), None)
+    if not info:
+        raise InstallError("The installation disk is unavailable")
+    omit = ["--exclude=" + path for path in ("proc", "sys", "dev", "tmp", "run", "mnt", "media")]
+    used = subprocess.check_output(["du", "-sb", *omit, *sources], text=True)
+    needed = sum(int(line.split()[0]) for line in used.splitlines()) * 1.15
+    if info["bytes"] < needed:
+        raise InstallError(f"The selected disk needs at least {needed / 1024**3:.1f} GiB for this system.")
 
 
 def copy_system(exclude_extra=None):
-    """Copy the currently running live root filesystem onto the target."""
-    excludes = ["/proc", "/sys", "/dev", "/tmp", "/run", "/mnt", "/media",
-                "/root/persist_test.txt"]
-    if exclude_extra:
-        excludes += exclude_extra
-    check_disk_space(excludes)
-    tar_excludes = " ".join(f"--exclude={e}" for e in excludes)
-    log("Copying base system to target disk (this can take a few minutes)...")
-    cmd = (
-        f"tar --one-file-system {tar_excludes} -cf - -C / . | "
-        f"tar xpf - -C {TARGET}"
-    )
-    run(cmd)
-    for d in ("proc", "sys", "dev", "tmp", "run", "mnt", "media"):
-        os.makedirs(os.path.join(TARGET, d), exist_ok=True)
+    # The graphical live user's home, passwords and mutable overlay stay on the media.
+    source = MEDIA_BASE if MEDIA_BASE.is_mount() else Path("/")
+    excludes = ["proc", "sys", "dev", "tmp", "run", "mnt", "media", "root/persist_test.txt"]
+    excludes.extend(name.lstrip("/") for name in (exclude_extra or ()))
+    log("Copying the base system to the target disk...")
+    pack = ["tar", "--one-file-system", *("--exclude=./" + name for name in excludes),
+            "-C", str(source), "-cpf", "-", "."]
+    with subprocess.Popen(pack, stdout=subprocess.PIPE) as reader:
+        try:
+            run(["tar", "-C", TARGET, "-xpf", "-"], stdin=reader.stdout)
+        finally:
+            reader.stdout.close()
+        if reader.wait():
+            raise InstallError("Could not read the base system from the installation media")
+    for name in ("proc", "sys", "dev", "tmp", "run", "mnt", "media"):
+        (Path(TARGET) / name).mkdir(exist_ok=True)
+    (Path(TARGET) / "tmp").chmod(0o1777)
+    if source == MEDIA_BASE:
+        payload = Path(__file__).resolve().parent
+        shutil.copytree(payload, Path(TARGET, "usr/local/lib/zackos-installer"), dirs_exist_ok=True,
+                        symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copy2(payload / "zackinstall", Path(TARGET, "usr/local/bin/zackinstall"))
+
+
+def populate_desktop():
+    profile = (MEDIA_INFO / "profile").read_text().strip()
+    if not re.fullmatch(r"/nix/store/[a-z0-9]{32}-[A-Za-z0-9+._?-]+", profile):
+        raise InstallError("Invalid desktop profile on the installation media")
+    log("Copying the desktop packages from the installation media...")
+    target_store = Path(TARGET, "nix/store")
+    paths = sorted((MEDIA_DESKTOP / "nix/store").iterdir())
+    for i in range(0, len(paths), 100):
+        subprocess.run(["cp", "-a", "-t", target_store, *paths[i:i+100]], check=True)
+    if chroot_run("true").returncode:
+        raise InstallError("Could not enter the target system")
+    nix = "/root/.nix-profile/bin/"
+    with (MEDIA_INFO / "registration").open("rb") as registration:
+        run(["chroot", TARGET, nix + "nix-store", "--load-db"], stdin=registration)
+    run(["chroot", TARGET, nix + "nix-env", "--profile", "/nix/var/nix/profiles/per-user/root/profile",
+         "--set", profile])
 
 
 def chroot_run(cmd):
     """Run a command inside the target chroot with proc/sys/dev bind-mounted."""
     for src, dst in (("/proc", "proc"), ("/sys", "sys"), ("/dev", "dev")):
         dst_path = os.path.join(TARGET, dst)
-        run(f"mount --bind {src} {dst_path}", check=False)
+        if not os.path.ismount(dst_path):
+            run(["mount", "--bind", src, dst_path])
     # BUG FIX (2026-08-08): `mount --bind /dev target/dev` only binds that
     # single mountpoint - it does NOT carry across /dev/pts, which is its
     # own separate devpts mount on the live system. Any chroot_run that
@@ -203,7 +217,8 @@ def chroot_run(cmd):
     # loop dutifully retried 3 times and then correctly hard-failed on -
     # but the real fix is just giving the chroot a working /dev/pts.
     os.makedirs(os.path.join(TARGET, "dev/pts"), exist_ok=True)
-    run(f"mount --bind /dev/pts {os.path.join(TARGET, 'dev/pts')}", check=False)
+    if not os.path.ismount(os.path.join(TARGET, "dev/pts")):
+        run(["mount", "--bind", "/dev/pts", os.path.join(TARGET, "dev/pts")])
     # BUG FIX (2026-08-05): the copied base system's /etc/resolv.conf is
     # whatever existed at tar-copy time -- often stale/empty, since dhcpcd
     # writes the live resolv.conf asynchronously. Any chroot_run that needs
@@ -375,13 +390,7 @@ def write_profile(profile):
     log(f"Wrote ZackOS profile: {profile.to_dict()}")
 
 
-def install_wm(choice):
-    if choice == "plasma-x11":
-        return install_plasma_x11()
-    if choice == "none":
-        log("Skipping WM install (console-only system).")
-        return
-
+def fetch_i3_packages():
     # BUG FIX (2026-08-08): this whole function used to be "best effort" -
     # link_nix_bins() was called with require_all=False (its default), so
     # if the nix-env fetch below failed for ANY reason (most commonly: the
@@ -412,15 +421,8 @@ def install_wm(choice):
     # via KMS/udev exactly like Fedora/Arch/Ubuntu, same as no distro
     # ships a hand-written xorg.conf video Section anymore. vesa is
     # VBE/INT10-only and doesn't even exist as a code path on UEFI boots.
-    packages = [
-        "nixpkgs.i3", "nixpkgs.i3status", "nixpkgs.dmenu", "nixpkgs.xterm",
-        "nixpkgs.rxvt-unicode",
-        "nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
-        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa",
-        "nixpkgs.dejavu_fonts", "nixpkgs.inter", "nixpkgs.xrdb", "nixpkgs.adwaita-icon-theme",
-        "nixpkgs.feh", "nixpkgs.scrot", "nixpkgs.xdotool", "nixpkgs.xclip",
-        "nixpkgs.i3lock", "nixpkgs.dbus", "nixpkgs.xdm", "nixpkgs.firefox", "nixpkgs.thunar",
-    ]
+    names = (Path(__file__).resolve().parent / "desktop/i3-packages").read_text().split()
+    packages = ["nixpkgs." + name for name in names]
     ok = False
     for attempt in range(1, 4):
         result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA "
@@ -434,6 +436,22 @@ def install_wm(choice):
             "Failed to install the i3/Xorg package set after 3 attempts - "
             "check network connectivity inside the chroot (see wait_for_network)."
         )
+    # Nix's build hooks use bash process substitution on the LFS devtmpfs.
+    panel = chroot_run(export + "if ! test -e /dev/fd; then ln -s /proc/self/fd /dev/fd; fi; "
+                       "nix-env -f /usr/local/lib/zackos-installer/desktop/panel/runtime.nix -i")
+    if panel.returncode:
+        raise InstallError("Failed to install the ZackOS panel and application launcher")
+
+
+def install_wm(choice, bundled=False):
+    if choice == "plasma-x11":
+        return install_plasma_x11()
+    if choice == "none":
+        log("Skipping WM install (console-only system).")
+        return
+
+    if not bundled:
+        fetch_i3_packages()
     # These are the packages the config files below actually invoke; if
     # any are missing the WM will render but be broken (no cursor, no
     # bar, tofu boxes), so require every one of them instead of quietly
@@ -442,11 +460,6 @@ def install_wm(choice):
         "i3", "i3bar", "i3status", "xterm", "urxvt", "dmenu", "startx",
         "Xorg", "xauth", "xrdb", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
-    # Nix's build hooks use bash process substitution on the LFS devtmpfs.
-    panel = chroot_run(export + "if ! test -e /dev/fd; then ln -s /proc/self/fd /dev/fd; fi; "
-                       "nix-env -f /usr/local/lib/zackos-installer/desktop/panel/runtime.nix -i")
-    if panel.returncode:
-        raise InstallError("Failed to install the ZackOS panel and application launcher")
     configure_i3_desktop()
     register_nix_fonts()
 
@@ -758,7 +771,7 @@ def repair_sysv_console():
         f.write('\nexport PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:${PATH}"\n')
 
 
-def install_init(choice, part=None):
+def install_init(choice, part=None, bundled=False):
     i3_desktop = (Path(TARGET) / "etc/X11/xdm/xdm-config").exists()
     xdm_command = "/usr/local/lib/zackos-installer/desktop/zackos-display"
     if choice == "sysvinit":
@@ -777,7 +790,8 @@ def install_init(choice, part=None):
         f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
         f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; "
     )
-    chroot_run(export + "nix-env -iA nixpkgs.runit")
+    if not bundled:
+        chroot_run(export + "nix-env -iA nixpkgs.runit")
     link_nix_bins(["runit", "runsvdir", "runsv", "sv", "chpst", "svlogd"], require_all=True)
 
     etc_runit = os.path.join(TARGET, "etc/runit")
@@ -1125,34 +1139,51 @@ def check_package_cache():
 
 
 def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
-                  root_password="", username=None, user_password=None, profile=None):
-    profile = profile or InstallerProfile(
-        desktop=wm_choice or "i3", init=init_choice or "sysvinit"
-    )
+                 root_password="", username=None, user_password=None, profile=None, identity=None, progress=None):
+    profile = profile or InstallerProfile(desktop=wm_choice or "i3", init=init_choice or "sysvinit")
     errors = validate_profile(profile, require_implemented=True)
     if errors:
         raise InstallError("Profile is not installable yet: " + "; ".join(errors))
-    if profile.desktop != "none" or profile.init == "runit":
-        check_package_cache()
-    part = partition_disk(disk)
-    format_partition(part)
-    mount_target(part)
-    try:
-        copy_system()
-        write_fstab(part)
-        write_profile(profile)
-        set_hostname(hostname)
-        set_root_password(root_password)
-        install_wm(profile.desktop)
-        if username:
-            create_user(username, user_password or root_password)
-        install_init(profile.init, part)
-        install_bootloader(disk, part)
-        if profile.desktop == "i3" and username:
-            marker = Path(TARGET, "boot/grub/zackos-first-user")
-            marker.write_text(username + "\n")
-            marker.chmod(0o600)
+    Path("/run/lock").mkdir(parents=True, exist_ok=True)
+    with open("/run/lock/zackos-install.lock", "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise InstallError("Another ZackOS installation is running") from exc
+        bundled = bundled_desktop(profile)
+        if not bundled and (profile.desktop != "none" or profile.init == "runit"):
+            check_package_cache()
+        if os.path.ismount(TARGET):
+            raise InstallError("The installation target is already mounted")
+        report = progress or (lambda step, message: None)
+        report(0, "Checking available space")
+        check_capacity(disk, bundled)
+        report(0, "Preparing the disk")
+        part = partition_disk(disk, identity)
+        format_partition(part)
+        mount_target(part)
+        try:
+            report(1, "Copying the base system")
+            copy_system()
+            write_fstab(part)
+            write_profile(profile)
+            set_hostname(hostname)
+            set_root_password(root_password)
+            report(2, "Installing the desktop and packages")
+            if bundled:
+                populate_desktop()
+            install_wm(profile.desktop, bundled)
+            report(3, "Setting up accounts and services")
+            if username:
+                create_user(username, user_password or root_password)
+            install_init(profile.init, part, bundled)
+            report(4, "Installing GRUB")
+            install_bootloader(disk, part)
+            if profile.desktop == "i3" and username:
+                marker = Path(TARGET, "boot/grub/zackos-first-user")
+                marker.write_text(username + "\n")
+                marker.chmod(0o600)
             run(["sync"])
-    finally:
-        cleanup_mounts()
-    log("Install complete!")
+        finally:
+            cleanup_mounts()
+        log("Install complete!")
