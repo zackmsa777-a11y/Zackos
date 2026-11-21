@@ -1,0 +1,6 @@
+[KDE]
+LookAndFeelPackage=org.zackos.orbit.desktop
+
+[General]
+font=Inter,10,-1,5,50,0,0,0,0,0
+fixed=DejaVu Sans Mono,10,-1,7,50,0,0,0,1,0

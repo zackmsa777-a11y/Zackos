@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="ZackOS">
+  <g transform="translate(8 6) scale(.94)">
+    <path fill="#d8ff62" d="M18 8h101L66 60H31l35-33H0z"/>
+    <path fill="#64bb9e" d="M66 60 32 95 8 92l23-32z"/>
+    <path fill="#d8ff62" d="m32 83 77 0-19 21H0l21-21z"/>
+  </g>
+</svg>

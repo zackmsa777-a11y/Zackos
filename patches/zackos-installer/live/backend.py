@@ -32,7 +32,7 @@ def validate(job):
         raise ValueError("Enter a valid computer name.")
     username = job["username"]
     reserved = {line.split(":", 1)[0] for line in (core.MEDIA_BASE / "etc/passwd").read_text().splitlines()}
-    if job["desktop"] == "i3":
+    if job["desktop"] in ("i3", "plasma-x11"):
         reserved.add("lightdm")
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username) or username in reserved:
         raise ValueError("Choose an unused, lowercase username.")

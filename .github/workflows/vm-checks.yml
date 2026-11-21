@@ -60,7 +60,9 @@ jobs:
           - {platform: qemu, video: virtio, firmware: bios, init: runit, accel: tcg, shutdown: acpi}
           - {platform: virtualbox, video: vmsvga, firmware: bios, init: runit, accel: native, shutdown: user}
           - {platform: virtualbox, video: vboxsvga, firmware: uefi, init: runit, accel: native, shutdown: acpi}
-    name: ${{ matrix.platform }} ${{ matrix.video }} ${{ matrix.firmware }} ${{ matrix.accel }}
+          - {platform: qemu, video: virtio, firmware: bios, init: runit, accel: kvm, desktop: plasma-x11, memory_mib: 3072}
+          - {platform: qemu, video: virtio, firmware: bios, init: sysvinit, accel: kvm, desktop: plasma-x11, memory_mib: 4096}
+    name: ${{ matrix.desktop == 'plasma-x11' && format('KDE Plasma X11 {0} ({1} MiB)', matrix.init, matrix.memory_mib) || format('{0} {1} {2} {3}', matrix.platform, matrix.video, matrix.firmware, matrix.accel) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,6 +101,8 @@ jobs:
           INIT: ${{ matrix.init }}
           ACCEL: ${{ matrix.accel }}
           SHUTDOWN: ${{ matrix.shutdown }}
+          DESKTOP: ${{ matrix.desktop }}
+          MEMORY_MIB: ${{ matrix.memory_mib }}
         run: |
           cd "$RUNNER_TEMP/iso"
           sha256sum -c SHA256SUMS
@@ -106,7 +110,9 @@ jobs:
           sha256sum -c ZackOS-i3.iso.sha256
           rm ZackOS-i3.iso.part*
           args=("$GITHUB_WORKSPACE/patches/zackos-installer/test-vm-install.py" ZackOS-i3.iso "$PLATFORM" "$VIDEO" "$FIRMWARE" --init "$INIT" --shutdown "$SHUTDOWN" --output "$RUNNER_TEMP/screens")
-          if [[ $PLATFORM == virtualbox ]]; then
+          if [[ $DESKTOP == plasma-x11 ]]; then
+            sudo /usr/bin/python3 -u "$GITHUB_WORKSPACE/patches/zackos-installer/test-plasma-install.py" ZackOS-i3.iso "$INIT" --memory-mib "$MEMORY_MIB" --output "$RUNNER_TEMP/screens"
+          elif [[ $PLATFORM == virtualbox ]]; then
             sudo /usr/bin/python3 -u "${args[@]}"
           elif [[ $ACCEL == kvm ]]; then
             if [[ $VIDEO == virtio ]]; then args+=(--move-to-sata); fi
@@ -117,7 +123,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screen-${{ matrix.platform }}-${{ matrix.video }}-${{ matrix.firmware }}-${{ matrix.accel }}
+          name: screen-${{ matrix.desktop == 'plasma-x11' && format('plasma-{0}', matrix.init) || format('{0}-{1}-{2}-{3}', matrix.platform, matrix.video, matrix.firmware, matrix.accel) }}
           path: ${{ runner.temp }}/screens/*.png
           if-no-files-found: ignore
           retention-days: 7
@@ -147,6 +153,11 @@ jobs:
         with:
           pattern: screen-*
           path: screens
+      - uses: actions/checkout@v4
+        if: steps.draft.outputs.tag != ''
+        with:
+          path: source
+          persist-credentials: false
       - name: Attach verified media and guest screenshots to the draft
         if: steps.draft.outputs.tag != ''
         env:
@@ -159,4 +170,6 @@ jobs:
           cp "$qemu/launcher.png" media/qemu-app-launcher.png
           cp "$qemu/kitty.png" media/kitty.png
           if [[ -f "$qemu/boot-splash.png" ]]; then cp "$qemu/boot-splash.png" media/boot-splash.png; fi
+          cp screens/screen-plasma-runit/plasma-{desktop,launcher,konsole}.png media/
+          tar -chzf media/ZackOS-Orbit-Plasma.tar.gz -C source/patches/zackos-installer/desktop/plasma/share .
           gh release upload "$TAG" media/* --clobber --repo "$GITHUB_REPOSITORY"

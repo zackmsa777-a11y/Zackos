@@ -21,22 +21,28 @@ def main():
     if os.getuid() == 0:
         raise RuntimeError("Run this check as the live account")
     options = json.load(sys.stdin)
+    options.setdefault("desktop", "i3")
     disks = request("disks")["disks"]
     if len(disks) != 1 or disks[0]["bytes"] != 24 * 1024**3:
         raise RuntimeError("Expected the single 24 GiB disposable disk")
     disk = disks[0]
     print("Installer target", disk["path"], disk["model"], flush=True)
     started = request("install", disk=disk["path"], identity=disk["identity"], erase=True,
-                      hostname="zackos", desktop="i3", username="tester", **options)
+                      hostname="zackos", username="tester", **options)
     assert started.get("started"), started
     previous = ""
-    for _ in range(900):
-        state = request("status")
+    deadline = time.monotonic() + 900
+    while time.monotonic() < deadline:
+        try:
+            state = request("status")
+        except TimeoutError:
+            # The GTK client also polls again if a busy guest misses a reply.
+            continue
         if state["message"] != previous:
             print(state["message"], flush=True)
             previous = state["message"]
         if state["phase"] == "failed":
-            raise RuntimeError("\n".join(state["log"]))
+            raise RuntimeError("\n".join([*state["log"], state["message"]]))
         if state["phase"] == "done":
             return
         time.sleep(1)

@@ -496,7 +496,7 @@ def install_wm(choice, bundled=False):
         "Xorg", "xauth", "xrdb", "i3lock", "feh", "scrot", "xdotool", "xclip",
     ], require_all=True)
     configure_i3_desktop()
-    configure_lightdm()
+    configure_lightdm("zackos-i3")
     register_nix_fonts()
 
     write_xinitrc(choice)
@@ -531,11 +531,19 @@ def configure_dbus():
     service.chmod(0o755)
 
 
+def prepare_x11_session():
+    target = Path(TARGET)
+    (target / "tmp").chmod(0o1777)
+    (target / "root").chmod(0o700)
+    (target / "etc/shadow").chmod(0o600)
+    configure_xorg()
+    configure_dbus()
+
+
 def configure_i3_desktop():
     target = Path(TARGET)
     profile = "/nix/var/nix/profiles/default"
-    configure_xorg()
-    configure_dbus()
+    prepare_x11_session()
     session = target / "etc/X11/zackos-session"
     session.write_text(
         "#!/bin/sh\n"
@@ -549,23 +557,22 @@ def configure_i3_desktop():
         'exec dbus-run-session -- "$@"\n'
     )
     session.chmod(0o755)
-    (target / "tmp").chmod(0o1777)
-    (target / "root").chmod(0o700)
-    (target / "etc/shadow").chmod(0o600)
 
 
-def configure_lightdm():
+def configure_lightdm(session_name):
     target = Path(TARGET)
     src = Path(__file__).with_name("desktop") / "login"
     profile = "/nix/var/nix/profiles/default"
+    conf = target / "etc/lightdm/lightdm.conf"
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    conf.write_text((src / "lightdm.conf").read_text().replace("@SESSION@", session_name))
     # Install only the two LightDM PAM services, leaving console authentication intact.
     files = {
-        "lightdm.conf": "etc/lightdm/lightdm.conf",
         "lightdm-gtk-greeter.conf": "etc/lightdm/lightdm-gtk-greeter.conf",
         "users.conf": "etc/lightdm/users.conf",
         "lightdm.pam": "etc/pam.d/lightdm",
         "lightdm-greeter.pam": "etc/pam.d/lightdm-greeter",
-        "zackos-i3.desktop": "usr/share/xsessions/zackos-i3.desktop",
+        f"{session_name}.desktop": f"usr/share/xsessions/{session_name}.desktop",
         "sign-in.png": "usr/share/backgrounds/zackos/sign-in.png",
         "avatar.png": "usr/share/pixmaps/zackos-avatar.png",
     }
@@ -602,21 +609,39 @@ def install_plasma_x11():
     wait_for_network()
     export = (f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
               f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; " )
-    packages = ["nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
-        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd", "nixpkgs.dbus",
-        "nixpkgs.dejavu_fonts", "nixpkgs.rxvt-unicode",
-        "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
-        "nixpkgs.kdePackages.kactivitymanagerd", "nixpkgs.kdePackages.kded", "nixpkgs.kdePackages.kservice",
-        "nixpkgs.kdePackages.kwin-x11", "nixpkgs.kdePackages.systemsettings",
-        "nixpkgs.kdePackages.dolphin", "nixpkgs.kdePackages.konsole",
-        "nixpkgs.kdePackages.breeze", "nixpkgs.kdePackages.breeze-icons", "nixpkgs.elogind"]
-    result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA " + " ".join(packages))
-    if result.returncode != 0: raise InstallError("Failed to install KDE Plasma X11 package set")
+    # A single evaluation of all these attributes can exhaust a 4 GiB live VM.
+    # Each nix-env invocation releases its evaluator before the next group starts.
+    groups = {
+        "X11": ("xorg-server", "xinit", "xauth", "xf86-input-libinput", "mesa", "libglvnd", "dbus", "elogind"),
+        "login and fonts": ("lightdm", "lightdm-gtk-greeter", "linux-pam", "adwaita-icon-theme", "dejavu_fonts", "inter"),
+        "Plasma workspace": ("kdePackages.plasma-desktop", "kdePackages.plasma-workspace", "kdePackages.kwin-x11",
+                             "kdePackages.kactivitymanagerd", "kdePackages.kded", "kdePackages.kservice"),
+        "Plasma appearance": ("kdePackages.breeze", "kdePackages.breeze-icons", "kdePackages.plasma-integration",
+                              "kdePackages.qqc2-desktop-style"),
+        "KDE applications": ("kdePackages.systemsettings", "kdePackages.dolphin", "kdePackages.konsole"),
+        "terminal tools": ("rxvt-unicode", "kitty", "zsh", "fastfetch"),
+    }
+    for group, names in groups.items():
+        log(f"Installing {group}")
+        attributes = " ".join("nixpkgs." + name for name in names)
+        result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA " + attributes)
+        if result.returncode:
+            raise InstallError(f"Failed to install {group} for KDE Plasma X11 (exit {result.returncode})")
     link_nix_bins(["startx", "Xorg", "xauth", "urxvt", "startplasma-x11", "kwin_x11", "plasmashell", "konsole", "dolphin"], require_all=True)
     register_nix_fonts()
-    configure_xorg()
-    configure_dbus()
+    prepare_x11_session()
+    desktop = Path(__file__).with_name("desktop") / "plasma"
+    target = Path(TARGET)
+    # Copy the shared Orbit artwork into a self-contained KDE wallpaper package.
+    shutil.copytree(desktop / "share", target / "usr/share", dirs_exist_ok=True)
+    shutil.copytree(desktop / "config", target / "etc/xdg", dirs_exist_ok=True)
+    session = target / "etc/X11/zackos-session"
+    shutil.copyfile(desktop / "session.sh", session)
+    session.chmod(0o755)
+    configure_desktop_terminal()
+    configure_lightdm("zackos-plasma")
     write_xinitrc("plasma-x11")
+
 
 def register_nix_fonts():
     """Point the base LFS system's fontconfig at the Nix-installed fonts.
@@ -665,25 +690,7 @@ def configure_xorg():
 
 def write_xinitrc(choice="i3"):
     """Set up the selected X11 session for the new account."""
-    if choice == "plasma-x11":
-        content = """#!/bin/sh
-profile=/nix/var/nix/profiles/default
-export PATH="$profile/bin:/usr/local/bin:/usr/bin:/bin"
-export XDG_DATA_DIRS="$profile/share:/usr/local/share:/usr/share"
-export XDG_CONFIG_DIRS="$profile/etc/xdg:/etc/xdg"
-export QT_PLUGIN_PATH="$profile/lib/qt-6/plugins"
-export QML2_IMPORT_PATH="$profile/lib/qt-6/qml"
-if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-    XDG_RUNTIME_DIR=$(mktemp -d) || exit 1
-    export XDG_RUNTIME_DIR
-    trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
-    dbus-run-session -- startplasma-x11
-else
-    exec dbus-run-session -- startplasma-x11
-fi
-"""
-    else:
-        content = "#!/bin/sh\nexec /etc/X11/zackos-session\n"
+    content = "#!/bin/sh\nexec /etc/X11/zackos-session\n"
     for rel in ("etc/skel/.xinitrc", "root/.xinitrc"):
         path = os.path.join(TARGET, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -700,19 +707,8 @@ exec "$profile/bin/startx" "$HOME/.xinitrc" -- "$profile/bin/Xorg" :0 vt7 -nolis
 """)
         os.chmod(helper, 0o755)
 
-def write_i3_config():
+def copy_desktop_defaults(files):
     desktop = Path(__file__).with_name("desktop")
-    files = {
-        "i3.conf": ["etc/i3/config", "etc/skel/.config/i3/config", "root/.config/i3/config"],
-        "i3status.conf": ["etc/zackos/i3status.conf"],
-        "Xresources": ["etc/X11/zackos.Xresources"],
-        "orbit.png": ["usr/share/backgrounds/zackos/orbit.png"],
-        "terminal/kitty.conf": ["etc/skel/.config/kitty/kitty.conf"],
-        "terminal/zprofile": ["etc/skel/.zprofile"],
-        "terminal/zshrc": ["etc/skel/.zshrc"],
-        "terminal/fastfetch.jsonc": ["etc/xdg/fastfetch/config.jsonc", "etc/skel/.config/fastfetch/config.jsonc"],
-        "terminal/logo.txt": ["usr/share/zackos/fastfetch-logo.txt"],
-    }
     for name, destinations in files.items():
         for destination in destinations:
             path = Path(TARGET, destination)
@@ -720,6 +716,15 @@ def write_i3_config():
             shutil.copyfile(desktop / name, path)
             path.chmod(0o644)
 
+
+def configure_desktop_terminal():
+    copy_desktop_defaults({
+        "terminal/kitty.conf": ["etc/skel/.config/kitty/kitty.conf"],
+        "terminal/zprofile": ["etc/skel/.zprofile"],
+        "terminal/zshrc": ["etc/skel/.zshrc"],
+        "terminal/fastfetch.jsonc": ["etc/xdg/fastfetch/config.jsonc", "etc/skel/.config/fastfetch/config.jsonc"],
+        "terminal/logo.txt": ["usr/share/zackos/fastfetch-logo.txt"],
+    })
     # Fastfetch reads Kitty's version here before falling back to a terminal query.
     kitty_lib = Path(TARGET, "usr/lib/kitty")
     if not os.path.lexists(kitty_lib):
@@ -734,6 +739,15 @@ def write_i3_config():
         release.write_text('NAME=ZackOS\nPRETTY_NAME=ZackOS\nID=zackos\n'
                            'HOME_URL="https://github.com/zackmsa777-a11y/Zackos"\n')
 
+
+def write_i3_config():
+    copy_desktop_defaults({
+        "i3.conf": ["etc/i3/config", "etc/skel/.config/i3/config", "root/.config/i3/config"],
+        "i3status.conf": ["etc/zackos/i3status.conf"],
+        "Xresources": ["etc/X11/zackos.Xresources"],
+        "orbit.png": ["usr/share/backgrounds/zackos/orbit.png"],
+    })
+    configure_desktop_terminal()
     gtk = Path(TARGET, "etc/gtk-3.0/settings.ini")
     gtk.parent.mkdir(parents=True, exist_ok=True)
     settings = configparser.ConfigParser(interpolation=None)
@@ -815,7 +829,7 @@ def repair_sysv_console():
 
 
 def install_init(choice, part=None, bundled=False):
-    i3_desktop = (Path(TARGET) / "etc/lightdm/lightdm.conf").exists()
+    graphical_login = (Path(TARGET) / "etc/lightdm/lightdm.conf").is_file()
     desktop_bus = (Path(TARGET) / "usr/local/sbin/zackos-dbus").is_file()
     display_command = "/usr/local/lib/zackos-installer/desktop/zackos-display"
     if choice == "sysvinit":
@@ -823,7 +837,7 @@ def install_init(choice, part=None, bundled=False):
         with (Path(TARGET) / "etc/inittab").open("a") as inittab:
             if desktop_bus:
                 inittab.write("db:2345:respawn:/usr/local/sbin/zackos-dbus\n")
-            if i3_desktop:
+            if graphical_login:
                 inittab.write(f"xd:2345:respawn:{display_command}\n")
         log("Keeping sysvinit with explicit tty1/ttyS0 getty configuration.")
         return
@@ -972,7 +986,7 @@ def install_init(choice, part=None, bundled=False):
     write_service("acpid", "/usr/sbin/acpid -f")
     if desktop_bus:
         write_service("dbus", "/usr/local/sbin/zackos-dbus")
-    if i3_desktop:
+    if graphical_login:
         write_service("lightdm", display_command)
     # setsid -c claims its stdin. Both services inherit /dev/console from
     # runsvdir, so open each getty's own terminal before claiming it.
@@ -1128,12 +1142,12 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
             report(3, "Setting up accounts and services")
             if username:
                 create_user(username, user_password or root_password,
-                            shell=DESKTOP_SHELL if profile.desktop == "i3" else "/bin/bash")
+                            shell=DESKTOP_SHELL if profile.desktop in ("i3", "plasma-x11") else "/bin/bash")
             configure_power(profile.init, username)
             install_init(profile.init, part, bundled)
             report(4, "Installing GRUB")
             install_bootloader(disk, part, esp=esp)
-            if profile.desktop == "i3" and username:
+            if profile.desktop in ("i3", "plasma-x11") and username:
                 marker = Path(TARGET, "boot/grub/zackos-first-user")
                 marker.write_text(username + "\n")
                 marker.chmod(0o600)

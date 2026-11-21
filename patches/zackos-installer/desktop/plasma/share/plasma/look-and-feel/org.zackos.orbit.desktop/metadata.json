@@ -1,0 +1,15 @@
+{
+    "KPlugin": {
+        "Id": "org.zackos.orbit.desktop",
+        "Name": "ZackOS Orbit",
+        "Description": "A charcoal Plasma desktop with chartreuse accents and a floating dock.",
+        "Authors": [
+            {
+                "Name": "ZackOS"
+            }
+        ],
+        "Icon": "zackos-orbit",
+        "Website": "https://github.com/zackmsa777-a11y/Zackos"
+    },
+    "KPackageStructure": "Plasma/LookAndFeel"
+}

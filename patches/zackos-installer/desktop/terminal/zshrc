@@ -10,7 +10,7 @@ compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
 
 # Green on success, coral after a failed command. %~ abbreviates the home path.
 PROMPT='%F{10}%B%n%b%f%F{8}@%f%F{6}%m%f  %B%~%b %(?.%F{10}.%F{1})❯%f '
-if [[ -t 1 && -n $KITTY_WINDOW_ID && -z $ZACKOS_FETCH_SHOWN ]] && (( $+commands[fastfetch] )); then
+if [[ -t 1 && ( -n $KITTY_WINDOW_ID || -n $KONSOLE_VERSION ) && -z $ZACKOS_FETCH_SHOWN ]] && (( $+commands[fastfetch] )); then
     export ZACKOS_FETCH_SHOWN=1
     fastfetch
 fi

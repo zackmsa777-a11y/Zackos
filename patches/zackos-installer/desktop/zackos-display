@@ -39,6 +39,15 @@ def start_client(name):
 def start_display(live=False):
     subprocess.run(["/usr/local/lib/zackos-installer/boot/splash-done"], check=False)
     if not live:
+        # X11 session management needs a root-owned sticky ICE socket directory.
+        # /tmp can be fresh on every boot. Never follow a symlink in it as root.
+        old_umask = os.umask(0)
+        try:
+            os.mkdir("/tmp/.ICE-unix", 0o1777)
+        except FileExistsError:
+            pass
+        finally:
+            os.umask(old_umask)
         # The installed disk has taken over from the ISO, so retire its GRUB handoff.
         MARKER.unlink(missing_ok=True)
         os.environ["PATH"] = f"{BIN}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"

@@ -149,7 +149,7 @@ class Qemu:
         machine = "pc" if opt.video == "virtio" and (iso or not opt.move_to_sata) else "q35"
         bus = "virtio" if machine == "pc" else "ide"
         args = ["qemu-system-x86_64", "-machine", machine, "-accel", opt.accel, "-cpu", "max",
-                "-smp", "2", "-m", "3072", "-vga", opt.video, "-display", "none",
+                "-smp", "2", "-m", str(getattr(opt, "memory", 3072)), "-vga", opt.video, "-display", "none",
                 "-drive", f"file={self.disk},if={bus},format=qcow2",
                 "-nic", "user,model=" + ("virtio-net-pci" if machine == "pc" else "e1000"),
                 "-serial", f"unix:{self.serial},server=on,wait=on",
@@ -270,6 +270,13 @@ def check_console_terminals(disk):
                    "ps -C agetty -o tty=,args= | grep -E '^[[:space:]]*tty1[[:space:]].*agetty .*tty1'"))
 
 
+def install_as_live(live, desktop, init, root_pass, user_pass):
+    live.write_script((HERE / "tests/install-as-live.py").read_text(), "/tmp/zack-test-install.py")
+    live.run("chmod 644 /tmp/zack-test-install.py")
+    options = json.dumps(dict(desktop=desktop, init=init, root_password=root_pass, user_password=user_pass))
+    print(live.run("echo " + shlex.quote(options) + " | su -s /bin/sh -c '/usr/bin/python3 /tmp/zack-test-install.py' live", 950), flush=True)
+
+
 def check_vm(vm, opt):
     root_pass, user_pass = secrets.token_hex(12), secrets.token_hex(10)
     start = time.monotonic()
@@ -286,10 +293,7 @@ def check_vm(vm, opt):
     kernel = live.run("cmp /mnt/cdrom/boot/vmlinuz /mnt/zackos-base/boot/vmlinuz-*; "
                       "sha256sum /mnt/cdrom/boot/vmlinuz | cut -d' ' -f1")
     assert re.fullmatch(r"[0-9a-f]{64}", kernel)
-    live.write_script((HERE / "tests/install-as-live.py").read_text(), "/tmp/zack-test-install.py")
-    live.run("chmod 644 /tmp/zack-test-install.py")
-    options = json.dumps(dict(init=opt.init, root_password=root_pass, user_password=user_pass))
-    print(live.run("echo " + shlex.quote(options) + " | su -s /bin/sh -c '/usr/bin/python3 /tmp/zack-test-install.py' live", 950), flush=True)
+    install_as_live(live, "i3", opt.init, root_pass, user_pass)
     print("Shutting down the live session with the virtual ACPI button.", flush=True)
     vm.acpi()
     vm.off()

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=ZackOS Plasma
+Comment=KDE Plasma X11 with the ZackOS Orbit theme
+Exec=/nix/var/nix/profiles/default/bin/startplasma-x11
+TryExec=/nix/var/nix/profiles/default/bin/startplasma-x11
+Type=Application
+DesktopNames=KDE
