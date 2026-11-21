@@ -968,28 +968,17 @@ def install_init(choice, part=None, bundled=False):
             os.remove(link_path)
         os.symlink(os.path.join("..", "sv", name), link_path)
 
-    # BUG FIX (2026-08-07): login always rejected the CORRECT root password
-    # ("Login incorrect" every time), even after confirming byte-for-byte
-    # that /etc/shadow's crypt() hash matched and getspnam() worked fine in
-    # isolation. Root cause: agetty is exec'd directly as a runsv service
-    # child (runsvdir -> runsv -> this run script), which is never a
-    # session leader with no controlling terminal of its own - agetty's own
-    # internal setsid()/TIOCSCTTY handling did not recover from that in
-    # this environment, so `login` (its child) never actually owned
-    # ttyS0/tty1 as a controlling terminal even though the prompt displayed
-    # fine. Confirmed live: wrapping the exact same agetty invocation in
-    # `setsid -c` (new session + explicitly claim the current tty as
-    # controlling) fixed authentication immediately with the unmodified
-    # password - proving this was a tty/session bug, never a password one.
-    # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
     write_service("power", "/usr/local/bin/zackos-power --serve runit")
     write_service("acpid", "/usr/sbin/acpid -f")
     if desktop_bus:
         write_service("dbus", "/usr/local/sbin/zackos-dbus")
     if i3_desktop:
         write_service("lightdm", display_command)
-    write_service("agetty-tty1", "setsid -c /sbin/agetty tty1 38400 linux")
-    write_service("agetty-ttyS0", "setsid -c /sbin/agetty -L 115200 ttyS0 vt100")
+    # setsid -c claims its stdin. Both services inherit /dev/console from
+    # runsvdir, so open each getty's own terminal before claiming it.
+    for tty, args in (("tty1", "tty1 38400 linux"), ("ttyS0", "-L ttyS0 115200 vt100")):
+        write_service(f"agetty-{tty}",
+                      f"setsid -c /sbin/agetty {args} </dev/{tty} >/dev/{tty} 2>&1")
 
     # VOID-STYLE ADDITIONS: two services Void supervises for real that
     # this system previously only ever ran ad-hoc (udevd, backgrounded in

@@ -327,6 +327,9 @@ def check_vm(vm, opt):
     vm.screen(opt.output / "kitty.png")
     print("Signed in to i3, opened the launcher and Kitty.", flush=True)
     if opt.init == "runit":
+        # Both gettys must keep their own controlling terminal while LightDM runs.
+        print(disk.run("test \"$(ps -p $$ -o tty= | xargs)\" = ttyS0; "
+                       "ps -C agetty -o tty=,args= | grep -E '^[[:space:]]*tty1[[:space:]].*agetty .*tty1'"))
         print(disk.run("shutdown -c; shutdown -r +5; zackos-power status | grep reboot; "
                        "shutdown -c; zackos-power status | grep none; "
                        "if shutdown -x; then exit 1; fi; if su -s /bin/sh -c '/sbin/shutdown -h +1' tester; then exit 1; fi"))
