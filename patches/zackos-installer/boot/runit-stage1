@@ -1,0 +1,14 @@
+#!/bin/sh
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+devnum=$(awk '$5 == "/" { print $3; exit }' /proc/self/mountinfo)
+rootdev=$(readlink -f /sys/dev/block/"$devnum") || exit 1
+mount -o remount,rw /dev/"${rootdev##*/}" / || exit 1
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -a 2>/dev/null || true
+/usr/sbin/ip link set dev lo up
+hostname -F /etc/hostname 2>/dev/null || true
+exit 0

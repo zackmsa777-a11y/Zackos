@@ -60,6 +60,12 @@ jobs:
           sha256sum ZackOS-i3.iso.part* > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
+          name: zackos-system-tools
+          path: ${{ runner.temp }}/media/ZackOS-system-tools.iso*
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
           name: zackos-iso-parts
           path: ${{ runner.temp }}/media/
           compression-level: 0

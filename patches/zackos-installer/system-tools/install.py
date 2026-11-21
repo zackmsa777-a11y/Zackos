@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Install the offline ZackOS system tools from the mounted update disc."""
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import shutil
 import stat
 import subprocess
 import tempfile
+
+
+V510_RUNIT_STAGE1_SHA256 = "2692eb3861ab300fc8db8706dab8c773d29aabfbf055abc7f79364587d21263f"
 
 
 def trusted_dir(path):
@@ -29,6 +33,21 @@ def replace_file(source, dest, mode):
             os.replace(tmp, dest)
         finally:
             tmp.unlink(missing_ok=True)
+
+
+def repair_running_loopback(media):
+    stage = Path("/etc/runit/1")
+    if not stage.is_file():
+        return
+    trusted_dir(stage.parent)
+    template = media / "runit-stage1"
+    # Update the stock v5.10 startup script only. Keep administrator edits.
+    current = stage.read_bytes()
+    if not stage.is_symlink() and hashlib.sha256(current).hexdigest() == V510_RUNIT_STAGE1_SHA256:
+        replace_file(template, stage, 0o755)
+    elif current != template.read_bytes():
+        print("For your custom runit startup, check that /usr/sbin/ip link set dev lo up runs at boot.")
+    subprocess.run(["/usr/sbin/ip", "link", "set", "dev", "lo", "up"], check=True)
 
 
 def install(root, media):
@@ -89,6 +108,8 @@ def install(root, media):
     for name in ("curl", "wget", "sudo"):
         subprocess.run(["/usr/sbin/chroot", str(root), f"/usr/bin/{name}", "--version"],
                        stdout=subprocess.DEVNULL, check=True)
+    if root == Path("/"):
+        repair_running_loopback(media)
     print("Installed curl, wget and sudo, and restored su and passwd. Check sudo -v from your desktop account.")
 
 

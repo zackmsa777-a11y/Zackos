@@ -64,7 +64,7 @@ install -m644 curl-8.23.0/COPYING "$files/share/zackos-tools/curl-COPYING"
 for pkg in libpsl-dev libidn2-dev libunistring-dev libnghttp2-dev; do
     install -m644 "/usr/share/doc/$pkg/copyright" "$files/share/zackos-tools/$pkg-copyright"
 done
-install -m644 "$src/install.py" "$src/sudoers" "$media/"
+install -m644 "$src/install.py" "$src/sudoers" "$src/../boot/runit-stage1" "$media/"
 python3 "$media/install.py" --root "$root"
 if [[ -n $output ]]; then
     xorriso -as mkisofs -quiet -r -J -V ZACKTOOLS -o "$output" "$media"

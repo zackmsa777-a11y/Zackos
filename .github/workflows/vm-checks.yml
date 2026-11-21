@@ -141,7 +141,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils python3-pil
       - uses: actions/download-artifact@v4
         with:
-          name: zackos-iso-parts
+          name: zackos-system-tools
           path: ${{ runner.temp }}/update
           run-id: ${{ needs.media.outputs.run }}
           github-token: ${{ github.token }}
@@ -149,7 +149,6 @@ jobs:
         working-directory: ${{ runner.temp }}/update
         run: |
           sha256sum -c ZackOS-system-tools.iso.sha256
-          rm ZackOS-i3.iso.part*
           base=https://github.com/zackmsa777-a11y/Zackos/releases/download/v5.10-plasma-orbit
           for n in 00 01 02; do
             curl -fLsS --retry 3 "$base/ZackOS-i3.iso.part$n" -o "old.part$n"

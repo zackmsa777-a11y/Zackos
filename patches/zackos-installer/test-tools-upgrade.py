@@ -40,7 +40,16 @@ def upgrade(vm, installer, update):
         vm.off()
     finally:
         disk.sock.close()
-    print("Updated a released v5.10 disk twice with its accounts, passwords and local sudoers intact.", flush=True)
+    vm.boot()
+    disk = vmtest["Serial"](vm.serial, root_pass, vmtest["DISK_AUTH"])
+    try:
+        disk.run("ip -4 -o addr show dev lo | grep -q '127.0.0.1/8'; "
+                 "grep -qx preserved /home/tester/zackos-update-check")
+        vm.acpi()
+        vm.off()
+    finally:
+        disk.sock.close()
+    print("Updated v5.10 twice and cold-booted with loopback, accounts, passwords and local sudoers intact.", flush=True)
 
 
 if __name__ == "__main__":
