@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 import urllib.request
@@ -253,16 +254,30 @@ def block_id(part, field):
     return value
 
 
+def efi_image_builder():
+    tool = shutil.which("grub-mkstandalone")
+    if tool:
+        return Path(tool)
+    # The LFS image exposes the Nix GRUB sbin directory through individual links.
+    install = Path(shutil.which("grub-install") or "/usr/local/sbin/grub-install")
+    return install.resolve().parents[1] / "bin/grub-mkstandalone"
+
+
 def install_bootloader(disk, part, label="ZACKROOT", esp=None):
     log("Installing GRUB bootloader...")
     if esp:
         boot = Path(TARGET, "boot")
         loader = boot / "efi/EFI/BOOT"
         loader.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(EFI_ASSETS / "BOOTX64.EFI", loader / "BOOTX64.EFI")
-        (loader / "zackos.cfg").write_text(
-            f"search --no-floppy --fs-uuid --set=root {block_id(part, 'UUID')}\n"
-            "configfile /boot/grub/grub.cfg\n")
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder, "grub.cfg")
+            config.write_text(
+                f"search --no-floppy --fs-uuid --set=root {block_id(part, 'UUID')}\n"
+                "configfile /boot/grub/grub.cfg\n")
+            run([str(efi_image_builder()), "-d", str(EFI_ASSETS / "x86_64-efi"),
+                 "-O", "x86_64-efi", "--locales=", "--fonts=",
+                 "--modules=part_gpt part_msdos fat ext2 search_fs_uuid",
+                 "-o", str(loader / "BOOTX64.EFI"), f"boot/grub/grub.cfg={config}"])
         fonts = boot / "grub/fonts"
         fonts.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(EFI_ASSETS / "unicode.pf2", fonts / "unicode.pf2")
@@ -1076,7 +1091,8 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
         report(0, "Checking available space")
         efi = Path("/sys/firmware/efi").is_dir()
         if efi and not all(path.is_file() for path in
-                           (EFI_ASSETS / "BOOTX64.EFI", EFI_ASSETS / "unicode.pf2", Path("/usr/sbin/mkfs.fat"))):
+                           (efi_image_builder(), EFI_ASSETS / "x86_64-efi/modinfo.sh", EFI_ASSETS / "x86_64-efi/kernel.img",
+                            EFI_ASSETS / "unicode.pf2", Path("/usr/sbin/mkfs.fat"))):
             raise InstallError("The installation media is missing its UEFI tools.")
         if not Path("/usr/sbin/acpid").is_file():
             raise InstallError("The installation media is missing its ACPI power service.")

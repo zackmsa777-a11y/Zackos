@@ -28,10 +28,7 @@ install -Dm755 dosfstools-4.2/src/mkfs.fat "$dest/usr/sbin/mkfs.fat"
 install -Dm755 acpid-2.0.34/acpid "$dest/usr/sbin/acpid"
 efi="$dest/usr/local/share/zackos-efi"
 mkdir -p "$efi"
-cat > entry.cfg <<'GRUB'
-if regexp --set=1:esp '^[(]([^)]*)[)]' "$cmdpath"; then
-    configfile ($esp)/EFI/BOOT/zackos.cfg
-fi
-GRUB
-grub-mkstandalone -O x86_64-efi -o "$efi/BOOTX64.EFI" --locales="" --fonts="" "boot/grub/grub.cfg=entry.cfg"
+# The installer uses the base system's GRUB image builder to embed the new
+# root UUID in BOOTX64.EFI, even when firmware supplies no loader device path.
+cp -a /usr/lib/grub/x86_64-efi "$efi/"
 install -m644 /usr/share/grub/unicode.pf2 "$efi/unicode.pf2"
