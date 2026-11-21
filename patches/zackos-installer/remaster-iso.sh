@@ -38,7 +38,7 @@ rm "$work/base.img"
 rm -f "$root"/{build.log,build_ch8.log,ch5_output.log,ch6_output.log,ch8_output.log,cmake_build.log}
 rm -f "$root"/boot/{vmlinuz-*,config-*,System.map-*}
 rm -rf "$root/usr/lib/modules"
-tar xzf "$kernel" -C "$root"
+tar --no-same-owner -xzf "$kernel" -C "$root"
 kernels=("$root"/boot/vmlinuz-*)
 [[ ${#kernels[@]} == 1 && -s ${kernels[0]} ]]
 cp "${kernels[0]}" "$layout/boot/vmlinuz"
