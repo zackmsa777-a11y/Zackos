@@ -56,11 +56,14 @@ class Serial:
         prompt = (host[1].encode() + b" login:") if host else b"login:"
         responses = []
         for _ in range(4):
+            # agetty and PAM can flush queued input when they change tty modes.
+            time.sleep(.3)
             self.send("root")
             marker, reply = self.expect((b"Password:", prompt), 45)
             responses.append(reply[-180:])
             if marker == prompt:
                 continue
+            time.sleep(.3)
             self.send(password)
             marker, reply = self.expect((b"# ", prompt), 45)
             responses.append(reply[-180:])
