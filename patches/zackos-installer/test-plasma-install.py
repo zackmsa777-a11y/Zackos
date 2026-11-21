@@ -39,19 +39,23 @@ def sign_in(vm, disk, password):
 
 
 def capture_wallpaper(vm, output):
-    # Compare the center of the actual framebuffer with the unlabelled KDE wallpaper.
+    # Wait for both the wallpaper and the bottom dock to finish appearing.
     with Image.open(HERE / "desktop/login/sign-in.png") as source:
         art = source.convert("RGB")
     until = time.monotonic() + 45
+    ready = False
     while time.monotonic() < until:
         vm.screen(output)
         with Image.open(output) as source:
             frame = source.convert("RGB")
         w, h = frame.size
         area = (w//10, h//4, 9*w//10, 3*h//4)
-        difference = ImageChops.difference(frame, ImageOps.fit(art, frame.size)).crop(area)
-        if max(ImageStat.Stat(difference).mean) < 10:
+        difference = ImageChops.difference(frame, ImageOps.fit(art, frame.size))
+        dock = (w//2-w//16, h-h//14, w//2+w//16, h-4)
+        visible = max(ImageStat.Stat(difference.crop(area)).mean) < 10 and max(ImageStat.Stat(difference.crop(dock)).mean) > 18
+        if ready and visible:
             return frame
+        ready = visible
         time.sleep(.6)
     raise RuntimeError("The Orbit wallpaper did not appear on the guest display")
 
@@ -84,6 +88,7 @@ def check(vm, iso, init, out):
                        "test -s /home/tester/.config/kitty/kitty.conf; test -s /home/tester/.config/fastfetch/config.jsonc"), flush=True)
         disk.write_script((HERE / "tests/plasma-session.py").read_text(), "/tmp/zackos-check-plasma.py")
         sign_in(vm, disk, user_pass)
+        disk.run("test \"$(stat -c '%u:%a' /tmp/.ICE-unix)\" = 0:1777")
         # Wait for activity creation before inspecting the first layout.
         disk.wait("! pgrep -u tester -f '/[.]?ksplashqml(-wrapped)?( |$)'", 100)
         disk.wait(PROBE + "layout", 70)
@@ -105,11 +110,12 @@ def check(vm, iso, init, out):
             raise RuntimeError("The application launcher did not appear")
         key(vm, "esc")
         disk.run(PROBE + "konsole")
-        disk.wait("pgrep -u tester -f '/[.]?konsole(-wrapped)?( |$)' && pgrep -u tester -x zsh")
         disk.wait("ls /home/tester/.cache/zsh/zcompdump-* >/dev/null && ! pgrep -u tester -x fastfetch")
-        for character in "ps -p 1 -o comm=":
-            key(vm, {" ": "spc", "-": "minus", "=": "equal"}.get(character, character))
+        for character in "ps -p 1 -o comm= | tee pid1":
+            key(vm, {" ": "spc", "-": "minus", "=": "equal", "|": "shift-backslash"}.get(character, character))
         key(vm, "ret")
+        expected = "runit" if init == "runit" else "init"
+        disk.wait(f"grep -qx {expected} /home/tester/pid1", 20)
         time.sleep(.4)
         vm.screen(out / "plasma-konsole.png")
         vm.acpi()

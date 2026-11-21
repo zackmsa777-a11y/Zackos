@@ -1,6 +1,6 @@
 [Appearance]
 ColorScheme=ZackOSOrbit
-Font=DejaVu Sans Mono,11,-1,5,400,0,0,0,0,0
+Font=DejaVu Sans Mono,11,-1,7,50,0,0,0,1,0
 
 [General]
 Name=ZackOS Orbit
