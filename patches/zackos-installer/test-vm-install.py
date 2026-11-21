@@ -239,7 +239,7 @@ def check_vm(vm, opt):
     live.wait("pgrep -xu live i3 && xdotool search --onlyvisible --name '^Install ZackOS$'")
     print(f"Live i3 and installer visible in {time.monotonic()-start:.1f}s.", flush=True)
     vm.screen(opt.output / "live-installer.png")
-    print(live.run("ls -l /dev/dri; xrandr --current | head -3; test -e /sys/class/drm/card0; "
+    print(live.run("ls -l /dev/dri; xrandr --current | head -3; compgen -G '/dev/dri/card[0-9]*'; "
                    "grep -m1 'Using input driver.*libinput' /var/log/Xorg.0.log; "
                    "for f in /mnt/zackos-base/{build.log,build_ch8.log,ch5_output.log,ch6_output.log,ch8_output.log,cmake_build.log}; do test ! -e \"$f\"; done"))
     kernel = live.run("cmp /mnt/cdrom/boot/vmlinuz /mnt/zackos-base/boot/vmlinuz-*; "

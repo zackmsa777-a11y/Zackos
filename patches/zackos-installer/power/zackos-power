@@ -37,7 +37,8 @@ def schedule_time(value):
 
 def command(name, args):
     if name == "shutdown":
-        cli = argparse.ArgumentParser(prog=name)
+        cli = argparse.ArgumentParser(prog=name, add_help=False)
+        cli.add_argument("--help", action="help")
         flags = cli.add_mutually_exclusive_group()
         flags.add_argument("-c", dest="action", action="store_const", const="cancel")
         flags.add_argument("-r", dest="action", action="store_const", const="reboot")
@@ -69,7 +70,7 @@ class PowerServer(socketserver.UnixStreamServer):
         if at is not None and (type(at) is not int or not 0 <= at <= 2**40):
             raise ValueError("Invalid shutdown time.")
         if action == "status":
-            return self.pending or {"action": "none"}
+            return self.pending or {"action": "in-progress" if self.issued else "none"}
         if uid != 0 and (at is not None or action == "cancel"):
             raise ValueError("Only root can schedule or cancel a shutdown.")
         if action == "cancel":

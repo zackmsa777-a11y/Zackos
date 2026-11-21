@@ -38,6 +38,8 @@ working GRUB menu and successful `switch_root`/kernel boot.
 With QEMU installed, run `./qemu-i3.sh zackos.qcow2 ZackOS-i3.iso`
 from this directory. It creates a 24 GiB disk if needed. The VM uses x86-64
 BIOS, two vCPUs, 4 GiB RAM and VirtIO graphics. The launcher uses KVM when available and falls back to TCG.
+On a Linux graphical host with working OpenGL and QEMU's GTK and VirGL support,
+`ZACKOS_QEMU_3D=1 ./qemu-i3.sh zackos.qcow2` enables 3D on the VirtIO adapter.
 
 For VirtualBox, select Linux (64-bit), use a SATA disk, VMSVGA graphics,
 64 MiB video memory and leave 3D acceleration off. Either enable EFI before

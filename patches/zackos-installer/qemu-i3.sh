@@ -16,6 +16,11 @@ if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]] && qemu-system-x86_64 -accel 
 else
     accel=(-accel tcg)
 fi
-exec qemu-system-x86_64 -machine pc "${accel[@]}" -cpu max -smp 2 -m 4096 -vga virtio \
+case ${ZACKOS_QEMU_3D:-0} in
+    0) video=(-vga virtio) ;;
+    1) video=(-device virtio-vga-gl -display gtk,gl=on) ;;
+    *) echo "Set ZACKOS_QEMU_3D to 0 or 1." >&2; exit 2 ;;
+esac
+exec qemu-system-x86_64 -machine pc "${accel[@]}" -cpu max -smp 2 -m 4096 "${video[@]}" \
     -drive "file=$disk,if=virtio,format=qcow2" -nic user,model=virtio-net-pci \
     -serial mon:stdio "${media[@]}"

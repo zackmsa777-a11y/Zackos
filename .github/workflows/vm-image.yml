@@ -23,6 +23,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - run: python3 patches/zackos-installer/tests/test-power.py
       - name: Install image tools
         run: |
           sudo apt-get update -qq
