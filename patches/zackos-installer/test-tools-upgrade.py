@@ -45,6 +45,7 @@ def upgrade(vm, installer, update):
     try:
         disk.run("ip -4 -o addr show dev lo | grep -q '127.0.0.1/8'; "
                  "grep -qx preserved /home/tester/zackos-update-check")
+        disk.wait("test -S /run/zackos-power/control && pgrep -x acpid")
         vm.acpi()
         vm.off()
     finally:

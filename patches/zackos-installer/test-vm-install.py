@@ -159,7 +159,7 @@ class Qemu:
                      "-drive", f"if=pflash,unit=1,format=raw,file={self.vars}"]
         if iso:
             args += ["-cdrom", str(iso), "-boot", "order=c" if boot_from_disk else "once=d"]
-        print("Starting QEMU", "live ISO" if iso else "installed disk", flush=True)
+        print("Starting QEMU", "live ISO" if iso and not boot_from_disk else "installed disk", flush=True)
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=self.log)
         for _ in range(100):
             if self.proc.poll() is not None:
