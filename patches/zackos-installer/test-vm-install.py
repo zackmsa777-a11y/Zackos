@@ -97,6 +97,7 @@ class Serial:
     def wait(self, check, timeout=90):
         self.run(f"for n in $(seq 1 {timeout}); do if ( {check} ) >/dev/null 2>&1; "
                  f"then exit 0; fi; sleep 1; done; echo {shlex.quote('Timed out: ' + check)}; "
+                 "ls -l /dev/dri 2>/dev/null || true; dmesg | grep -Ei 'vmwgfx|simpledrm|pitchlock|framebuffer' | tail -20; "
                  "tail -18 /var/log/Xorg.0.log 2>/dev/null || true; "
                  "tail -8 /var/log/lightdm/lightdm.log 2>/dev/null || true; exit 1", timeout+12)
 
@@ -132,7 +133,15 @@ class Qemu:
                      "-drive", f"if=pflash,unit=1,format=raw,file={self.vars}"]
         if iso:
             args += ["-cdrom", str(iso), "-boot", "once=d"]
+        print("Starting QEMU", "live ISO" if iso else "installed disk", flush=True)
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=self.log)
+        for _ in range(100):
+            if self.proc.poll() is not None:
+                raise RuntimeError((self.work / "qemu.log").read_text()[-1700:])
+            if self.serial.exists():
+                return
+            time.sleep(.1)
+        raise TimeoutError("QEMU did not create its serial socket: " + (self.work / "qemu.log").read_text()[-1700:])
 
     def hmp(self, command):
         with connect(self.monitor, 3) as client:
@@ -196,17 +205,18 @@ class VBox:
 
     def screen(self, path):
         self.vb("controlvm", self.name, "screenshotpng", path)
+        path.chmod(0o644)
 
     def acpi(self):
         self.vb("controlvm", self.name, "acpipowerbutton")
 
     def off(self):
         for _ in range(85):
-            state = self.vb("showvminfo", self.name, "--machinereadable", capture_output=True, text=True).stdout
-            if 'VMState="poweroff"' in state:
+            state = subprocess.run(["VBoxManage", "showvminfo", self.name, "--machinereadable"], capture_output=True, text=True)
+            if state.returncode == 0 and 'VMState="poweroff"' in state.stdout:
                 return
             time.sleep(1)
-        raise TimeoutError("VirtualBox did not power down")
+        raise TimeoutError("VirtualBox did not power down: " + state.stderr[-400:])
 
     def close(self):
         subprocess.run(["VBoxManage", "controlvm", self.name, "poweroff"], capture_output=True)
@@ -239,7 +249,7 @@ def check_vm(vm, opt):
     live.wait("pgrep -xu live i3 && xdotool search --onlyvisible --name '^Install ZackOS$'")
     print(f"Live i3 and installer visible in {time.monotonic()-start:.1f}s.", flush=True)
     vm.screen(opt.output / "live-installer.png")
-    print(live.run("ls -l /dev/dri; xrandr --current | head -3; compgen -G '/dev/dri/card[0-9]*'; "
+    print(live.run("ls -l /dev/dri; xdotool getdisplaygeometry; compgen -G '/dev/dri/card[0-9]*'; "
                    "grep -m1 'Using input driver.*libinput' /var/log/Xorg.0.log; "
                    "for f in /mnt/zackos-base/{build.log,build_ch8.log,ch5_output.log,ch6_output.log,ch8_output.log,cmake_build.log}; do test ! -e \"$f\"; done"))
     kernel = live.run("cmp /mnt/cdrom/boot/vmlinuz /mnt/zackos-base/boot/vmlinuz-*; "
