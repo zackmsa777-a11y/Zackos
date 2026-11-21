@@ -2,7 +2,7 @@
 
 **A Linux distribution, built from scratch — and we're just getting started.**
 
-> Kernel 6.16.1 · GCC 15.2.0 · Python 3.13.7 · 100+ packages, hand-built from raw source · full XFCE desktop · self-contained live-boot ISO
+> Linux 6.16.1 · GCC 15.2.0 · Python 3.13.7 · live i3 desktop · offline graphical installer · BIOS and UEFI
 
 ---
 
@@ -10,7 +10,7 @@
 
 Most people install a distro. We built one.
 
-Every binary in this system — the kernel, the C library, the compiler, the desktop environment — was compiled from raw upstream source, in the correct dependency order, with every real-world build bug found and fixed along the way. No package manager, no prebuilt binaries, no shortcuts. This started as a strict [Linux From Scratch 12.4](https://www.linuxfromscratch.org/lfs/view/12.4/) + [BLFS](https://www.linuxfromscratch.org/blfs/) build and has grown into something that boots to a full graphical desktop on its own — which is where the "distro" part starts to become real.
+The original XFCE build compiled the kernel, C library, compiler and desktop from upstream source using [Linux From Scratch 12.4](https://www.linuxfromscratch.org/lfs/view/12.4/) and [BLFS](https://www.linuxfromscratch.org/blfs/). The current installer adds an offline i3 desktop to that base and uses Nix for the optional online Plasma X11 profile.
 
 We're calling it **zackos**. This repo is the automation that builds it.
 
@@ -75,7 +75,7 @@ This has stopped being "just an LFS exercise." The plan:
 
 If you want to help build the package manager, this is the spot — everything upstream of it (the OS it needs to manage) is already real and booting.
 
-## Verified working
+## Original XFCE build checks
 
 Booted this exact build to a full login prompt, logged in as root, ran `uname -a`, `df -h`, `free -h`, compiled and ran a C program with `gcc`, ran `python3`, launched a full XFCE session (Xorg + xfwm4 + xfdesktop + xfce4-panel all running simultaneously, clean logs), and did a clean shutdown back through SysVinit — all while boot-tested purely in QEMU (TCG software emulation, no KVM). On real hardware with KVM this is faster and even more capable.
 

@@ -606,6 +606,7 @@ def install_plasma_x11():
         "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd", "nixpkgs.dbus",
         "nixpkgs.dejavu_fonts", "nixpkgs.rxvt-unicode",
         "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
+        "nixpkgs.kdePackages.kactivitymanagerd", "nixpkgs.kdePackages.kded", "nixpkgs.kdePackages.kservice",
         "nixpkgs.kdePackages.kwin-x11", "nixpkgs.kdePackages.systemsettings",
         "nixpkgs.kdePackages.dolphin", "nixpkgs.kdePackages.konsole",
         "nixpkgs.kdePackages.breeze", "nixpkgs.kdePackages.breeze-icons", "nixpkgs.elogind"]
