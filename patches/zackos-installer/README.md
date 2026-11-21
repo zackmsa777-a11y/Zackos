@@ -64,7 +64,8 @@ in to LightDM with the account you created. Both init choices support Plasma.
 Plasma starts with **ZackOS Orbit**, the ringed-planet wallpaper, and a
 floating top panel. Click **Apps** to search applications. The bottom dock
 pins Dolphin, Konsole and System Settings and moves aside for windows.
-Konsole uses the matching Orbit terminal profile. You can change the global
+Konsole uses the matching Orbit terminal profile. Both Konsole and Kitty open
+with the ZackOS zsh prompt and Fastfetch system summary. You can change the global
 theme in **System Settings → Colors & Themes → Global Theme** and edit the
 panels in Plasma's Edit Mode.
 For a console-mode installation, `zackinstall --no-reboot` keeps the live session open.

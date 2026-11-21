@@ -70,8 +70,12 @@ def check(vm, iso, init, out):
     vm.boot()
     disk = VM["Serial"](vm.serial, root_pass, VM["DISK_AUTH"])
     try:
-        print(disk.run("readlink /proc/1/exe; cat /etc/zackos/profile.toml; "
-                       "grep -qx user-session=zackos-plasma /etc/lightdm/lightdm.conf"), flush=True)
+        pid1 = disk.run("readlink /proc/1/exe")
+        assert Path(pid1).name == {"runit": "runit", "sysvinit": "init"}[init], pid1
+        print("PID 1:", pid1, flush=True)
+        print(disk.run("cat /etc/zackos/profile.toml; grep -qx user-session=zackos-plasma /etc/lightdm/lightdm.conf; "
+                       "getent passwd tester | grep -q ':/nix/var/nix/profiles/default/bin/zsh$'; "
+                       "test -s /home/tester/.config/kitty/kitty.conf; test -s /home/tester/.config/fastfetch/config.jsonc"), flush=True)
         disk.write_script((HERE / "tests/plasma-session.py").read_text(), "/tmp/zackos-check-plasma.py")
         sign_in(vm, disk, user_pass)
         # Wait for activity creation before inspecting the first layout.
@@ -95,8 +99,8 @@ def check(vm, iso, init, out):
             raise RuntimeError("The application launcher did not appear")
         key(vm, "esc")
         disk.run(PROBE + "konsole")
-        disk.wait("pgrep -u tester -f '/[.]?konsole(-wrapped)?( |$)'")
-        time.sleep(1)
+        disk.wait("pgrep -u tester -f '/[.]?konsole(-wrapped)?( |$)' && pgrep -u tester -x zsh")
+        disk.wait("ls /home/tester/.cache/zsh/zcompdump-* >/dev/null && ! pgrep -u tester -x fastfetch")
         for character in "ps -p 1 -o comm=":
             key(vm, {" ": "spc", "-": "minus", "=": "equal"}.get(character, character))
         key(vm, "ret")

@@ -611,7 +611,7 @@ def install_plasma_x11():
               f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; " )
     packages = ["nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
         "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd", "nixpkgs.dbus",
-        "nixpkgs.dejavu_fonts", "nixpkgs.inter", "nixpkgs.rxvt-unicode",
+        "nixpkgs.dejavu_fonts", "nixpkgs.inter", "nixpkgs.rxvt-unicode", "nixpkgs.kitty", "nixpkgs.zsh", "nixpkgs.fastfetch",
         "nixpkgs.lightdm", "nixpkgs.lightdm-gtk-greeter", "nixpkgs.linux-pam", "nixpkgs.adwaita-icon-theme",
         "nixpkgs.kdePackages.plasma-integration", "nixpkgs.kdePackages.qqc2-desktop-style",
         "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
@@ -632,6 +632,7 @@ def install_plasma_x11():
     session = target / "etc/X11/zackos-session"
     shutil.copyfile(desktop / "session.sh", session)
     session.chmod(0o755)
+    configure_desktop_terminal()
     configure_lightdm("zackos-plasma")
     write_xinitrc("plasma-x11")
 
@@ -700,19 +701,8 @@ exec "$profile/bin/startx" "$HOME/.xinitrc" -- "$profile/bin/Xorg" :0 vt7 -nolis
 """)
         os.chmod(helper, 0o755)
 
-def write_i3_config():
+def copy_desktop_defaults(files):
     desktop = Path(__file__).with_name("desktop")
-    files = {
-        "i3.conf": ["etc/i3/config", "etc/skel/.config/i3/config", "root/.config/i3/config"],
-        "i3status.conf": ["etc/zackos/i3status.conf"],
-        "Xresources": ["etc/X11/zackos.Xresources"],
-        "orbit.png": ["usr/share/backgrounds/zackos/orbit.png"],
-        "terminal/kitty.conf": ["etc/skel/.config/kitty/kitty.conf"],
-        "terminal/zprofile": ["etc/skel/.zprofile"],
-        "terminal/zshrc": ["etc/skel/.zshrc"],
-        "terminal/fastfetch.jsonc": ["etc/xdg/fastfetch/config.jsonc", "etc/skel/.config/fastfetch/config.jsonc"],
-        "terminal/logo.txt": ["usr/share/zackos/fastfetch-logo.txt"],
-    }
     for name, destinations in files.items():
         for destination in destinations:
             path = Path(TARGET, destination)
@@ -720,6 +710,15 @@ def write_i3_config():
             shutil.copyfile(desktop / name, path)
             path.chmod(0o644)
 
+
+def configure_desktop_terminal():
+    copy_desktop_defaults({
+        "terminal/kitty.conf": ["etc/skel/.config/kitty/kitty.conf"],
+        "terminal/zprofile": ["etc/skel/.zprofile"],
+        "terminal/zshrc": ["etc/skel/.zshrc"],
+        "terminal/fastfetch.jsonc": ["etc/xdg/fastfetch/config.jsonc", "etc/skel/.config/fastfetch/config.jsonc"],
+        "terminal/logo.txt": ["usr/share/zackos/fastfetch-logo.txt"],
+    })
     # Fastfetch reads Kitty's version here before falling back to a terminal query.
     kitty_lib = Path(TARGET, "usr/lib/kitty")
     if not os.path.lexists(kitty_lib):
@@ -734,6 +733,15 @@ def write_i3_config():
         release.write_text('NAME=ZackOS\nPRETTY_NAME=ZackOS\nID=zackos\n'
                            'HOME_URL="https://github.com/zackmsa777-a11y/Zackos"\n')
 
+
+def write_i3_config():
+    copy_desktop_defaults({
+        "i3.conf": ["etc/i3/config", "etc/skel/.config/i3/config", "root/.config/i3/config"],
+        "i3status.conf": ["etc/zackos/i3status.conf"],
+        "Xresources": ["etc/X11/zackos.Xresources"],
+        "orbit.png": ["usr/share/backgrounds/zackos/orbit.png"],
+    })
+    configure_desktop_terminal()
     gtk = Path(TARGET, "etc/gtk-3.0/settings.ini")
     gtk.parent.mkdir(parents=True, exist_ok=True)
     settings = configparser.ConfigParser(interpolation=None)
@@ -1128,7 +1136,7 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
             report(3, "Setting up accounts and services")
             if username:
                 create_user(username, user_password or root_password,
-                            shell=DESKTOP_SHELL if profile.desktop == "i3" else "/bin/bash")
+                            shell=DESKTOP_SHELL if profile.desktop in ("i3", "plasma-x11") else "/bin/bash")
             configure_power(profile.init, username)
             install_init(profile.init, part, bundled)
             report(4, "Installing GRUB")
