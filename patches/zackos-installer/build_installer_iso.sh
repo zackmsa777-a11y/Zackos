@@ -4,22 +4,14 @@
 # everything from GitHub + the v4.2 release, no manual steps needed.
 set -e
 WORK=/app/installer_work
-REPO_URL="https://github.com/zackmsa777-a11y/Zackos"
-GH_TOKEN="${GITHUB_TOKEN}"
-
+INSTALLER_SRC=$(cd "$(dirname "$0")" && pwd)
 echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools squashfs-tools-ng xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
 
 mkdir -p "$WORK"
 cd "$WORK"
-
-echo "=== [2/9] fetch installer source from GitHub checkpoint ==="
-rm -rf gh_repo
-git clone -q "https://zackmsa777-a11y:${GH_TOKEN}@github.com/zackmsa777-a11y/Zackos.git" gh_repo
-INSTALLER_SRC="$WORK/gh_repo/patches/zackos-installer"
-test -f "$INSTALLER_SRC/core.py" || { echo "FATAL: installer source missing from GitHub checkpoint"; exit 1; }
 
 echo "=== [3/9] fetch v4.2 base ISO (skip if already present+verified) ==="
 if [ ! -f zackos_v42.iso ] || [ "$(md5sum zackos_v42.iso 2>/dev/null | awk '{print $1}')" != "01ce19d3e421f53f7212c0759a1d9176" ]; then
@@ -47,6 +39,7 @@ mkdir -p initrd_work
 zcat iso_layout/boot/initramfs.img | (cd initrd_work && cpio -idm --quiet)
 cp "$INSTALLER_SRC/../live-boot/zack-live-init.sh" initrd_work/init
 chmod +x initrd_work/init
+"$INSTALLER_SRC/package-installer.sh" "$WORK/initrd_work/zackinstaller"
 (cd initrd_work && find . -print | cpio -o -H newc --quiet | gzip -9) > iso_layout/boot/initramfs.img
 
 echo "=== [5/9] prep chroot (dev nodes, resolv.conf, installer files) ==="
@@ -67,9 +60,8 @@ NIX_STORE_PATH=$(find nix/store -maxdepth 1 -iname "*-nix-2.35.1" | head -1)
 ln -sf "/${NIX_STORE_PATH}/bin/nix" proc/self/exe
 cp /etc/resolv.conf etc/resolv.conf
 mkdir -p usr/local/lib/zackos-installer usr/local/bin
-cp "$INSTALLER_SRC"/core.py "$INSTALLER_SRC"/zackinstall.py usr/local/lib/zackos-installer/
-cp -a "$INSTALLER_SRC"/providers usr/local/lib/zackos-installer/
-cp "$INSTALLER_SRC"/zackinstall usr/local/bin/
+cp -R "$WORK/initrd_work/zackinstaller/." usr/local/lib/zackos-installer/
+cp "$INSTALLER_SRC/zackinstall" usr/local/bin/
 chmod +x usr/local/bin/zackinstall
 # Testing-only live login so QEMU/serial verification can reach ZackInstall.
 # Installed systems still receive the password selected in ZackInstall.
@@ -81,9 +73,9 @@ chroot "$WORK/rootfs" /bin/sh -c "echo 'root:zackos' | chpasswd"
 # NEVER actually applied by this build script before now -- confirmed via a
 # live boot test (bare `zackinstall`/`ip addr` both broken: PATH missing
 # /usr/local/{bin,sbin}, ens3 stayed DOWN with no DHCP client running).
-cp "$WORK/gh_repo/patches/etc-configs/profile" etc/profile
-cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/init.d/network
-cp "$WORK/gh_repo/patches/etc-configs/network-init" etc/rc.d/init.d/network
+cp "$INSTALLER_SRC/../etc-configs/profile" etc/profile
+cp "$INSTALLER_SRC/../etc-configs/network-init" etc/init.d/network
+cp "$INSTALLER_SRC/../etc-configs/network-init" etc/rc.d/init.d/network
 chmod +x etc/init.d/network etc/rc.d/init.d/network
 cd "$WORK"
 
@@ -138,7 +130,8 @@ if [ ! -d "linux-$KVER" ]; then
   tar xf "linux-$KVER.tar.xz"
 fi
 cd "linux-$KVER"
-cp "$WORK/gh_repo/patches/kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
+cp "$INSTALLER_SRC/../kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
+scripts/config --enable SQUASHFS --enable SQUASHFS_ZLIB --enable OVERLAY_FS --enable ISO9660_FS --enable BLK_DEV_LOOP --enable DRM_VIRTIO_GPU
 make olddefconfig > /dev/null
 make -j"$(nproc)" > "$WORK/kernel_build.log" 2>&1
 test -f arch/x86/boot/bzImage || { echo "FATAL: kernel build failed, see $WORK/kernel_build.log"; exit 1; }
@@ -176,7 +169,16 @@ cp iso_layout/boot/vmlinuz iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*vm
 cp iso_layout/boot/initramfs.img iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*initramfs* iso_final/boot/ 2>/dev/null || true
 ls iso_layout/boot/
 cp squash_installer.img iso_final/squash.img
-cat iso_layout/boot/grub/grub.cfg 2>/dev/null > iso_final/boot/grub/grub.cfg || true
+cp "$INSTALLER_SRC/branding/splash.cfg" iso_final/boot/grub/
+cp -R "$INSTALLER_SRC/branding/grub" iso_final/boot/grub/zackos
+cp "$INSTALLER_SRC/branding/live.cfg" iso_final/boot/grub/grub.cfg
+if [ "${ZACKOS_CONSOLE_ONLY:-0}" != 1 ]; then
+  if [ -n "${ZACKOS_DESKTOP_IMAGE:-}" ]; then
+    cp "$ZACKOS_DESKTOP_IMAGE" iso_final/desktop.img
+  else
+    "$INSTALLER_SRC/live/build-desktop.sh" iso_final/desktop.img
+  fi
+fi
 grub-mkrescue -o zackos_installer.iso iso_final > /dev/null 2>&1
 echo "=== [9/9] done ==="
 ls -la zackos_installer.iso

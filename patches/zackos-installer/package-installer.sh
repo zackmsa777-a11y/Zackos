@@ -1,0 +1,16 @@
+#!/bin/sh
+# Stage one complete installer payload for both ISO builders.
+set -eu
+src=$(cd "$(dirname "$0")" && pwd)
+dst=${1:?installer payload directory}
+mkdir -p "$dst/providers" "$dst/boot"
+cp "$src"/core.py "$src"/zackinstall.py "$src"/zackinstall "$dst/"
+cp "$src"/providers/*.py "$dst/providers/"
+mkdir -p "$dst/live"
+cp "$src"/live/*.py "$src"/live/*.css "$src"/live/*.desktop "$dst/live/"
+cp -R "$src/branding" "$src/desktop" "$dst/"
+cp "$src/boot/installed-init" "$src/boot/splash-done" "$dst/boot/"
+"$src/boot/build-splash.sh" "$dst/boot/zack-splash"
+find "$dst" -type d -exec chmod 755 {} +
+find "$dst" -type f -exec chmod 644 {} +
+chmod 755 "$dst/zackinstall" "$dst/desktop/zackos-display" "$dst/boot/"*

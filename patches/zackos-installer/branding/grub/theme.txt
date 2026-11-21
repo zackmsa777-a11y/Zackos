@@ -1,0 +1,31 @@
+title-text: ""
+desktop-image: "menu.png"
+desktop-image-scale-method: "stretch"
+desktop-color: "#10191c"
+terminal-font: "Unifont Regular 16"
+
++ boot_menu {
+    left = 8%
+    top = 48%
+    width = 53%
+    height = 29%
+    item_font = "Unifont Regular 16"
+    item_color = "#c0ceca"
+    selected_item_color = "#10191c"
+    selected_item_pixmap_style = "active_*.png"
+    item_height = 38
+    item_padding = 9
+    item_spacing = 4
+    icon_width = 0
+    icon_height = 0
+    item_icon_space = 4
+    scrollbar = false
+}
++ label {
+    id = "__timeout__"
+    left = 8%
+    top = 81%
+    font = "Unifont Regular 16"
+    color = "#d8ff62"
+    text = "Starting in %d s"
+}

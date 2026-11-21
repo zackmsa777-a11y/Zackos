@@ -102,7 +102,16 @@ else
     WORKDIR=/mnt/overlay/work
 fi
 
-mount -t overlay overlay -o "lowerdir=/mnt/squash,upperdir=$UPPERDIR,workdir=$WORKDIR" /newroot || {
+LOWER=/mnt/squash
+if [ -f /mnt/cdrom/desktop.img ]; then
+    mkdir -p /mnt/desktop
+    mount -t squashfs -o loop,ro /mnt/cdrom/desktop.img /mnt/desktop || {
+        log "Could not mount the live desktop image"; exec /bin/sh
+    }
+    LOWER=/mnt/desktop:/mnt/squash
+fi
+umount /mnt/squash/dev 2>/dev/null || true
+mount -t overlay overlay -o "lowerdir=$LOWER,upperdir=$UPPERDIR,workdir=$WORKDIR" /newroot || {
     log "Overlay mount failed"
     exec /bin/sh
 }
@@ -116,5 +125,33 @@ mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/mnt/cdrom /newroot/mnt
 if [ -n "$PERSISTDEV" ]; then
     mount --bind /mnt/persist /newroot/mnt/persist 2>/dev/null || true
 fi
+# Installer-only rebuilds carry the checkout in the last initramfs archive.
+if [ -d /zackinstaller ]; then
+    dst=/newroot/usr/local/lib/zackos-installer
+    mkdir -p "$dst" /newroot/usr/local/bin &&
+        cp -R /zackinstaller/. "$dst/" &&
+        cp /zackinstaller/zackinstall /newroot/usr/local/bin/ &&
+        chmod 755 /newroot/usr/local/bin/zackinstall || exec /bin/sh
+fi
+# The installer copies the original media, including when persistence is enabled.
+mkdir -p /newroot/mnt/zackos-base
+mount --bind /mnt/squash /newroot/mnt/zackos-base || exec /bin/sh
+mount --bind /mnt/cdrom /newroot/mnt/cdrom || exec /bin/sh
+if [ -d /mnt/desktop/nix/store ]; then
+    mkdir -p /newroot/mnt/zackos-desktop
+    mount --bind /mnt/desktop /newroot/mnt/zackos-desktop || exec /bin/sh
+fi
+# Replace our own entries when booting the same persistence volume again.
+sed -i '/^zl[pxb]:/d' /newroot/etc/inittab
+case " $(cat /proc/cmdline) " in
+    *" zackos.desktop=1 "*)
+        if [ -f /newroot/usr/local/share/zackos-media/profile ]; then
+            cat >> /newroot/etc/inittab <<'SERVICES'
+zlp:2345:wait:/usr/bin/python3 /usr/local/lib/zackos-installer/live/session.py
+zlb:2345:respawn:/usr/bin/python3 /usr/local/lib/zackos-installer/live/backend.py
+zlx:2345:respawn:/usr/local/lib/zackos-installer/desktop/zackos-display --live
+SERVICES
+        fi ;;
+esac
 log "Starting ZackOS userspace"
 exec switch_root /newroot /sbin/init

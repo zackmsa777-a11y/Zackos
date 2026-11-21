@@ -1,0 +1,16 @@
+# ZackOS interactive shell
+bindkey -e
+HISTFILE="${XDG_STATE_HOME:-$HOME/.local/state}/zsh/history"
+HISTSIZE=10000
+SAVEHIST=10000
+(umask 077; mkdir -p -- "${HISTFILE:h}" "${XDG_CACHE_HOME:-$HOME/.cache}/zsh")
+setopt append_history hist_ignore_dups hist_ignore_space
+autoload -Uz compinit
+compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
+
+# Green on success, coral after a failed command. %~ abbreviates the home path.
+PROMPT='%F{10}%B%n%b%f%F{8}@%f%F{6}%m%f  %B%~%b %(?.%F{10}.%F{1})❯%f '
+if [[ -t 1 && -n $KITTY_WINDOW_ID && -z $ZACKOS_FETCH_SHOWN ]] && (( $+commands[fastfetch] )); then
+    export ZACKOS_FETCH_SHOWN=1
+    fastfetch
+fi

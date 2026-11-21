@@ -1,0 +1,25 @@
+{
+  "logo": {
+    "type": "file",
+    "source": "/usr/share/zackos/fastfetch-logo.txt",
+    "color": { "1": "#d8ff62", "2": "#64bb9e" },
+    "padding": { "right": 4 }
+  },
+  "display": {
+    "separator": "   ",
+    "key": { "width": 12 },
+    "color": { "keys": "#8ed3b9", "title": "#d8ff62" }
+  },
+  "modules": [
+    "title",
+    { "type": "os", "key": "System", "format": "{pretty-name} {arch}" },
+    { "type": "kernel", "key": "Kernel", "format": "{sysname} {release}" },
+    { "type": "wm", "key": "Desktop" },
+    { "type": "terminal", "key": "Terminal", "format": "{pretty-name} {version}" },
+    { "type": "shell", "key": "Shell", "format": "{pretty-name} {version}" },
+    { "type": "memory", "key": "Memory" },
+    { "type": "uptime", "key": "Uptime" },
+    "break",
+    { "type": "colors", "symbol": "circle", "brightness": "normal" }
+  ]
+}

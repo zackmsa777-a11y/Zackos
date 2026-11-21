@@ -1,0 +1,46 @@
+* { font-family: Inter, "DejaVu Sans", sans-serif; }
+window, .shell { background: #f4f5ed; color: #182a25; }
+.shell { border: 1px solid #496159; }
+.rail { background: #142622; padding: 28px 15px 16px; }
+.brand { margin: 0 9px 40px; }
+.rail-step { color: #a8beb1; border-radius: 8px; padding: 10px 11px; font-size: 13px; font-weight: 600; }
+.rail-step.current { background: #2b4034; color: #e2ffae; }
+.rail-number { min-width: 23px; min-height: 23px; border: 1px solid #476357; border-radius: 12px; font-size: 11px; }
+.current .rail-number { background: #d8ff62; border-color: #d8ff62; color: #18271a; }
+.past .rail-number { color: #bcdda1; }
+.live-status { color: #ecf6d8; font-size: 12px; font-weight: 600; }
+.live-sub { color: #9db4a8; font-size: 11px; }
+.live-lamp { color: #c8ef80; font-size: 15px; }
+.body { padding: 23px 30px 14px; }
+.heading { font-size: 29px; font-weight: 700; color: #1c3029; }
+.lede { color: #506059; font-size: 14px; }
+.legend { color: #35473f; font-size: 12px; font-weight: 600; }
+.details { color: #5b6860; font-size: 12px; }
+.fact-box, .review-box { background: #e9eee3; border: 1px solid #d3dccd; border-radius: 9px; padding: 12px 16px; }
+.fact-value { color: #233c2e; font-size: 14px; font-weight: 600; }
+.fact-box separator { background: #cbd6c5; min-width: 1px; margin: 1px 15px; }
+.footer { border-top: 1px solid #d3dbce; padding: 13px 28px; }
+button { box-shadow: none; text-shadow: none; background-image: none; }
+button.primary, button.secondary, button.quiet { border-radius: 8px; padding: 7px 16px; min-height: 19px; font-size: 13px; font-weight: 600; }
+button.primary { background: #c6ed66; color: #203519; border: 1px solid #abc957; }
+button.primary:hover { background: #d6fa86; }
+button.primary:disabled { background: #dce3d4; color: #84917f; border-color: #d1d9c9; }
+button.secondary, button.quiet { color: #3e594b; border: 1px solid #c8d3c1; background: #f5f7f0; }
+button.quiet { background: transparent; border-color: transparent; }
+button.secondary:hover, button.quiet:hover { background: #e1e9da; }
+entry, combobox button { background: #fbfcf7; color: #20362c; border: 1px solid #b8c8b8; border-radius: 6px; padding: 5px 9px; min-height: 22px; box-shadow: none; }
+entry:focus { border-color: #5c885a; }
+entry selection { background: #416e56; color: white; }
+combobox cellview { color: #20362c; }
+.disk-list { background: #fbfcf7; border: 1px solid #cad5c6; border-radius: 8px; padding: 3px; }
+.disk-list row { color: #20362c; background: transparent; border-radius: 6px; padding: 6px 10px; }
+.disk-list row:selected { background: #deebcf; }
+.disk-name { font-size: 13px; font-weight: 700; }
+.disk-path { color: #53665c; font-size: 12px; font-family: "DejaVu Sans Mono", monospace; }
+.error { color: #903719; font-size: 12px; }
+checkbutton { color: #243d30; font-size: 13px; }
+checkbutton check { background: #fcfdf8; border: 1px solid #95a98e; }
+checkbutton check:checked { background: #457849; color: white; }
+progressbar trough { background: #d8e1d2; min-height: 7px; }
+progressbar progress { background: #6a9b51; min-height: 7px; }
+textview text { background: #182823; color: #e8f0dd; font-family: "DejaVu Sans Mono", monospace; font-size: 11px; }

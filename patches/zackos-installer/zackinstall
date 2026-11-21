@@ -7,4 +7,4 @@
 # Nix-provided tools (grub, dhcpcd, etc.) are always reachable by the
 # installer's own subprocess calls.
 export PATH="/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:$PATH"
-exec python3 /usr/local/lib/zackos-installer/zackinstall.py
+exec python3 /usr/local/lib/zackos-installer/zackinstall.py "$@"

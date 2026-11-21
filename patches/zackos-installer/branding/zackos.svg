@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="180" viewBox="0 0 560 180" role="img" aria-labelledby="title desc">
+  <title id="title">ZackOS</title>
+  <desc id="desc">A folded chartreuse Z with a teal underside beside an angular ivory ZackOS wordmark.</desc>
+  <rect width="560" height="180" rx="28" fill="#10191c"/>
+  <g transform="translate(36 34)">
+    <path fill="#d8ff62" d="M18 8h101L66 60H31l35-33H0z"/>
+    <path fill="#64bb9e" d="M66 60 32 95 8 92l23-32z"/>
+    <path fill="#d8ff62" d="m32 83 77 0-19 21H0l21-21z"/>
+  </g>
+  <g fill="none" stroke="#f4f6ec" stroke-width="8" stroke-linejoin="bevel" stroke-linecap="square" transform="translate(186 67)">
+    <path d="M0 0h41L0 46h41"/>
+    <path d="m56 46 20-46h6l20 46m-36-15h26"/>
+    <path d="M153 5 148 0h-27l-7 7v32l7 7h27l5-5"/>
+    <path d="M170 0v46m3-20 34-26m-25 19 26 27"/>
+    <g stroke="#d8ff62">
+      <path d="m231 0-7 7v32l7 7h25l7-7V7l-7-7z"/>
+      <path d="M320 0h-31l-7 7v8l7 7h23l7 7v10l-7 7h-32"/>
+    </g>
+  </g>
+</svg>

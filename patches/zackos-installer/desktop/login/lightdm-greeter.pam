@@ -1,0 +1,6 @@
+#%PAM-1.0
+auth      requisite pam_succeed_if.so quiet user = lightdm
+auth      required  pam_permit.so
+account   required pam_succeed_if.so quiet user = lightdm
+password  required pam_deny.so
+session   required pam_unix.so
