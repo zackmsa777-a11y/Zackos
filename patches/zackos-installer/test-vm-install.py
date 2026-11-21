@@ -248,7 +248,7 @@ def check_vm(vm, opt):
     live.write_script((HERE / "tests/install-as-live.py").read_text(), "/tmp/zack-test-install.py")
     live.run("chmod 644 /tmp/zack-test-install.py")
     options = json.dumps(dict(init=opt.init, root_password=root_pass, user_password=user_pass))
-    print(live.run("echo " + shlex.quote(options) + " | runuser -u live -- /usr/bin/python3 /tmp/zack-test-install.py", 950), flush=True)
+    print(live.run("echo " + shlex.quote(options) + " | su -s /bin/sh -c '/usr/bin/python3 /tmp/zack-test-install.py' live", 950), flush=True)
     print("Shutting down the live session with the virtual ACPI button.", flush=True)
     vm.acpi()
     vm.off()
@@ -291,11 +291,11 @@ def check_vm(vm, opt):
     if opt.init == "runit":
         print(disk.run("shutdown -c; shutdown -r +5; zackos-power status | grep reboot; "
                        "shutdown -c; zackos-power status | grep none; "
-                       "if shutdown -x; then exit 1; fi; if runuser -u tester -- shutdown -h +1; then exit 1; fi"))
-    disk.run("if runuser -u nobody -- /usr/local/bin/zackos-power poweroff; then exit 1; fi; "
-             "runuser -u tester -- /usr/local/bin/zackos-power status")
+                       "if shutdown -x; then exit 1; fi; if su -s /bin/sh -c 'shutdown -h +1' tester; then exit 1; fi"))
+    disk.run("if su -s /bin/sh -c '/usr/local/bin/zackos-power poweroff' nobody; then exit 1; fi; "
+             "su -s /bin/sh -c '/usr/local/bin/zackos-power status' tester")
     boot_id = disk.run("cat /proc/sys/kernel/random/boot_id")
-    disk.send("runuser -u tester -- /usr/local/bin/zackos-power reboot")
+    disk.send("su -s /bin/sh -c '/usr/local/bin/zackos-power reboot' tester")
     # The serial connection survives a hardware reset on both hypervisors.
     disk.until(b"login:", 150)
     disk.send("root")
@@ -309,7 +309,7 @@ def check_vm(vm, opt):
     if opt.shutdown == "acpi":
         vm.acpi()
     else:
-        disk.send("runuser -u tester -- /usr/local/bin/zackos-power poweroff")
+        disk.send("su -s /bin/sh -c '/usr/local/bin/zackos-power poweroff' tester")
     vm.off()
     disk.sock.close()
     print(f"Verified user reboot and installed {opt.shutdown} poweroff.", flush=True)
