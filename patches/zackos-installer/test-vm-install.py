@@ -49,16 +49,26 @@ class Serial:
         self.login(password, auth)
 
     def login(self, password, auth):
-        self.until(b"login:", 200)
+        issue = self.until(b"login:", 200)
+        # agetty writes the hostname just before the prompt. PAM also prints
+        # "Last login:" on subsequent logins, including after reboot.
+        host = re.search(r"([\w.()-]+)$", issue)
+        prompt = (host[1].encode() + b" login:") if host else b"login:"
+        responses = []
         for _ in range(4):
             self.send("root")
-            if self.expect((b"Password:", b"login:"), 40)[0] == b"login:":
+            marker, reply = self.expect((b"Password:", prompt), 45)
+            responses.append(reply[-180:])
+            if marker == prompt:
                 continue
             self.send(password)
-            if self.expect((b"# ", b"login:"), 40)[0] == b"# ":
+            marker, reply = self.expect((b"# ", prompt), 45)
+            responses.append(reply[-180:])
+            if marker == b"# ":
                 break
         else:
-            raise RuntimeError("Console login did not reach the root shell")
+            raise RuntimeError("Console login did not reach the root shell: " +
+                               repr(responses).replace(password, "[redacted]"))
         self.send("set +o history; set +o emacs; set +o vi; stty -echo cols 240; "
                   f"export PS1=ZACK_''TEST'>' DISPLAY=:0 XAUTHORITY={auth} PATH={PATH}; umask 077")
         self.until(self.prompt, 10)
@@ -321,7 +331,10 @@ def check_vm(vm, opt):
              "su -s /bin/sh -c '/usr/local/bin/zackos-power status' tester")
     boot_id = disk.run("cat /proc/sys/kernel/random/boot_id")
     disk.send("su -s /bin/sh -c '/usr/local/bin/zackos-power reboot' tester")
-    # The serial connection survives a hardware reset on both hypervisors.
+    # Ignore getty output from the old system while init stops its services.
+    # Both hypervisors retain the same serial connection across a reset.
+    disk.expect((b"GNU GRUB", b"Start ZackOS", b"Linux version 6.",
+                 b"enter stage: /etc/runit/1", b"INIT: version"), 180)
     disk.login(root_pass, DISK_AUTH)
     assert disk.run("cat /proc/sys/kernel/random/boot_id") != boot_id, "The VM did not restart"
     disk.wait("test -S /run/zackos-power/control && pgrep -x acpid")
