@@ -278,9 +278,10 @@ def install_as_live(live, desktop, init, root_pass, user_pass):
 
 
 def password_check(disk, command, password, *, success=True):
-    # Enter through a regular account and give the program one known test credential on its tty.
-    disk.send("su -s /bin/sh -c " + shlex.quote("test \"$(id -u)\" -ne 0 && " + command) +
-              " tester; printf '\\nZAUTH=%s\\n' \"$?\"")
+    # su -c detaches the caller's controlling tty. Allocate one owned by the
+    # desktop user, as Kitty does, so the password reader can open /dev/tty.
+    user_command = "test \"$(id -u)\" -ne 0 && exec script -qe -c " + shlex.quote(command) + " /dev/null"
+    disk.send("su -s /bin/sh -c " + shlex.quote(user_command) + " tester; printf '\\nZAUTH=%s\\n' \"$?\"")
     prompt, _ = disk.expect((b"assword:", disk.prompt), 20)
     if prompt == disk.prompt:
         raise RuntimeError("The command did not ask the regular user to authenticate")
