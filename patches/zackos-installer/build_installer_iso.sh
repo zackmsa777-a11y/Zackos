@@ -2,13 +2,13 @@
 # ZackOS installer-ISO rebuild - fully self-contained, idempotent-ish.
 # Re-run this same script after any sandbox revert; it re-downloads/rebuilds
 # everything from GitHub + the v4.2 release, no manual steps needed.
-set -e
+set -eo pipefail
 WORK=/app/installer_work
 INSTALLER_SRC=$(cd "$(dirname "$0")" && pwd)
 echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools squashfs-tools-ng xorriso grub-pc-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools squashfs-tools-ng xorriso grub-pc-bin grub-efi-amd64-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
 
 mkdir -p "$WORK"
 cd "$WORK"
@@ -36,7 +36,9 @@ rm -rf initrd_work
 mkdir -p initrd_work
 # The base image ships a gzip-compressed cpio initramfs. Replace only its
 # early userspace init; kernel and the rest of the live image stay untouched.
-zcat iso_layout/boot/initramfs.img | (cd initrd_work && cpio -idm --quiet)
+gzip -dc iso_layout/boot/initramfs.img > initrd.cpio
+(cd initrd_work && cpio -idm --quiet < ../initrd.cpio)
+rm initrd.cpio
 cp "$INSTALLER_SRC/../live-boot/zack-live-init.sh" initrd_work/init
 chmod +x initrd_work/init
 "$INSTALLER_SRC/package-installer.sh" "$WORK/initrd_work/zackinstaller"
@@ -110,43 +112,21 @@ ln -sf "/$DHCPCD_STORE/sbin/dhcpcd" rootfs/usr/local/sbin/dhcpcd
 chroot rootfs /bin/sh -c "export PATH=/usr/local/sbin:\$PATH; dhcpcd --version" || { echo "FATAL: dhcpcd not runnable"; exit 1; }
 echo "dhcpcd OK"
 
-echo "=== [6c/9] rebuild kernel from checked-in config (real-hardware storage-driver fix) ==="
-# The v4.2 base ISO's kernel panics on real hardware with older/non-AHCI
-# SATA/PATA chipsets (confirmed on a Fujitsu Siemens Amilo Pa 1538,
-# nVidia C51D/MCP51 chipset: "VFS: Unable to mount root fs on
-# unknown-block(0,0)"). ZackOS boots with NO initramfs (root=PARTUUID,
-# see write_grub_cfg() in core.py), so any driver needed to see the root
-# disk MUST be compiled in statically - modules can't load before the
-# root-mount attempt. patches/kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config
-# is the checked-in ground-truth config (has SATA_NV/ATA_GENERIC/etc builtin
-# as of the 2026-08-09 fix) - always build FROM this exact file, never from
-# a fresh `make defconfig` (tried once, caused an unrelated scheduler/hrtimer
-# panic from config drift).
-KVER=6.16.1
-mkdir -p kernel_build
-cd kernel_build
-if [ ! -d "linux-$KVER" ]; then
-  [ -f "linux-$KVER.tar.xz" ] || curl -sL -o "linux-$KVER.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz"
-  tar xf "linux-$KVER.tar.xz"
+echo "=== [6c/9] stage the VM kernel and firmware support ==="
+kernel=${ZACKOS_KERNEL_BUNDLE:-}
+if [ -z "$kernel" ]; then
+  kernel="$WORK/zackos-kernel.tar.gz"
+  rm -f "$kernel"
+  "$INSTALLER_SRC/boot/build-kernel.sh" "$kernel"
 fi
-cd "linux-$KVER"
-cp "$INSTALLER_SRC/../kernel-configs/config-6.16.1-lfs-12.4-bochs-drm.config" .config
-scripts/config --enable SQUASHFS --enable SQUASHFS_ZLIB --enable OVERLAY_FS --enable ISO9660_FS --enable BLK_DEV_LOOP --enable DRM_VIRTIO_GPU
-make olddefconfig > /dev/null
-make -j"$(nproc)" > "$WORK/kernel_build.log" 2>&1
-test -f arch/x86/boot/bzImage || { echo "FATAL: kernel build failed, see $WORK/kernel_build.log"; exit 1; }
-make INSTALL_MOD_PATH="$WORK/rootfs" modules_install >> "$WORK/kernel_build.log" 2>&1 || true
-
-# Preserve whatever vmlinuz-* name the base rootfs already uses (falls back
-# to the lfs-12.4 naming from scripts_chroot/kernel.sh if none found).
-OLD_KNAME=$(ls "$WORK/rootfs/boot" | grep '^vmlinuz-' | head -1)
-[ -n "$OLD_KNAME" ] || OLD_KNAME="vmlinuz-$KVER-lfs-12.4"
-cp arch/x86/boot/bzImage "$WORK/rootfs/boot/$OLD_KNAME"
-cp System.map "$WORK/rootfs/boot/System.map-$KVER"
-cp .config "$WORK/rootfs/boot/config-$KVER-lfs-12.4"
-cp arch/x86/boot/bzImage "$WORK/iso_layout/boot/vmlinuz"
-cd "$WORK"
-echo "kernel rebuild OK -> $OLD_KNAME"
+rm -rf rootfs/usr/lib/modules
+rm -f rootfs/boot/{vmlinuz-*,config-*,System.map-*}
+tar xzf "$kernel" -C rootfs
+kernels=(rootfs/boot/vmlinuz-*)
+[[ ${#kernels[@]} == 1 && -s ${kernels[0]} ]] || exit 1
+cp "${kernels[0]}" iso_layout/boot/vmlinuz
+"$INSTALLER_SRC/boot/build-support.sh" "$WORK/rootfs"
+rm -f rootfs/{build.log,build_ch8.log,ch5_output.log,ch6_output.log,ch8_output.log,cmake_build.log}
 
 echo "=== [7/9] repack squashfs + ISO ==="
 cd rootfs
@@ -165,9 +145,8 @@ echo "squash size: $(du -sh squash_installer.img | cut -f1)"
 
 rm -rf iso_final
 mkdir -p iso_final/boot/grub
-cp iso_layout/boot/vmlinuz iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*vmlinuz* iso_final/boot/ 2>/dev/null || true
-cp iso_layout/boot/initramfs.img iso_final/boot/ 2>/dev/null || cp iso_layout/boot/*initramfs* iso_final/boot/ 2>/dev/null || true
-ls iso_layout/boot/
+cp iso_layout/boot/{vmlinuz,initramfs.img} iso_final/boot/
+unsquashfs -cat squash_installer.img "boot/$(basename "${kernels[0]}")" | cmp - iso_final/boot/vmlinuz
 cp squash_installer.img iso_final/squash.img
 cp "$INSTALLER_SRC/branding/splash.cfg" iso_final/boot/grub/
 cp -R "$INSTALLER_SRC/branding/grub" iso_final/boot/grub/zackos

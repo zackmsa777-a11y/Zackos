@@ -1,0 +1,63 @@
+name: Build ZackOS VM installer
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/**']
+    paths:
+      - 'patches/kernel-configs/**'
+      - 'patches/live-boot/**'
+      - 'patches/zackos-installer/**'
+      - '!patches/zackos-installer/*.md'
+      - '!patches/zackos-installer/test*.py'
+      - '!patches/zackos-installer/tests/**'
+      - '.github/workflows/vm-image.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install image tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends grub-common grub-pc-bin grub-efi-amd64-bin mtools xorriso squashfs-tools cpio libdrm-dev libpng-dev zlib1g-dev bc bison flex libssl-dev libelf-dev kmod
+      - name: Fetch the verified v5.8 base
+        working-directory: ${{ runner.temp }}
+        run: |
+          url="https://github.com/zackmsa777-a11y/Zackos/releases/download/v5.8-i3-live-installer"
+          for n in 00 01 02 03 04 05 06; do
+            curl -fLsS --retry 4 "$url/ZackOS-i3.iso.part$n" >> v58.iso
+          done
+          echo 'c5983503f08831e319312c1e07ff422d17fdbdd6280d3996e35adfffa2f5865f  v58.iso' | sha256sum -c -
+      - name: Reuse the matching kernel build when available
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit=$(git log -1 --format=%H -- patches/kernel-configs patches/zackos-installer/boot/build-kernel.sh)
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$commit&status=success" --jq '[.workflow_runs[] | select(.path == ".github/workflows/kernel.yml")][0].id // empty')
+          if [[ -n $run ]] && gh run download "$run" -n zackos-kernel -D "$RUNNER_TEMP/kernel"; then
+            echo "ZACKOS_KERNEL_BUNDLE=$RUNNER_TEMP/kernel/zackos-kernel.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - name: Build BIOS and UEFI media
+        run: |
+          sudo --preserve-env=ZACKOS_KERNEL_BUNDLE patches/zackos-installer/remaster-iso.sh "$RUNNER_TEMP/v58.iso" "$RUNNER_TEMP/ZackOS-i3.iso"
+      - name: Split the boot-tested distribution format
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir media
+          split -b 1024M -d -a 2 ZackOS-i3.iso media/ZackOS-i3.iso.part
+          sha256sum ZackOS-i3.iso > media/ZackOS-i3.iso.sha256
+          cd media
+          sha256sum ZackOS-i3.iso.part* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zackos-iso-parts
+          path: ${{ runner.temp }}/media/
+          compression-level: 0
+          retention-days: 7

@@ -111,21 +111,27 @@ def list_disks():
     return [(d["path"], f'{d["bytes"] / 1024**3:.1f}G', d["model"]) for d in disk_inventory()]
 
 
-def partition_disk(disk, identity=None):
+EFI_ASSETS = Path("/usr/local/share/zackos-efi")
+ESP_MIB = 260
+
+
+def partition_path(disk, number):
+    return f"{disk}{'p' if disk[-1].isdigit() else ''}{number}"
+
+
+def partition_disk(disk, identity=None, efi=False):
     """Recheck the actual device immediately before writing its partition table."""
     choice = next((d for d in disk_inventory() if d["path"] == disk), None)
     if choice is None or (identity is not None and choice["identity"] != identity):
         raise InstallError("The selected disk changed or is in use. Select an available disk again.")
-    run(f"wipefs -a {disk}", check=False)
-    sfdisk_script = "label: dos\nstart=2048, type=83, bootable\n"
-    run(["sfdisk", disk], input_text=sfdisk_script)
-    run("partprobe " + disk, check=False)
-    # first partition device name
-    if re.search(r"\d$", disk):
-        part = disk + "p1"
+    run(["wipefs", "-a", disk])
+    if efi:
+        layout = f"label: gpt\nsize={ESP_MIB}MiB, type=U\ntype=L\n"
     else:
-        part = disk + "1"
-    return part
+        layout = "label: dos\nstart=2048, type=83, bootable\n"
+    run(["sfdisk", disk], input_text=layout)
+    run(["udevadm", "settle", "--timeout=15"])
+    return partition_path(disk, 2 if efi else 1)
 
 
 def format_partition(part, label="ZACKROOT"):
@@ -146,7 +152,7 @@ def bundled_desktop(profile):
     return profile.desktop == "i3" and MEDIA_DESKTOP.is_mount() and (MEDIA_INFO / "registration").is_file()
 
 
-def check_capacity(disk, bundled):
+def check_capacity(disk, bundled, efi=False):
     sources = [str(MEDIA_BASE) if MEDIA_BASE.is_mount() else "/"]
     if bundled:
         sources.append(str(MEDIA_DESKTOP / "nix/store"))
@@ -156,6 +162,8 @@ def check_capacity(disk, bundled):
     omit = ["--exclude=" + path for path in ("proc", "sys", "dev", "tmp", "run", "mnt", "media")]
     used = subprocess.check_output(["du", "-sb", *omit, *sources], text=True)
     needed = sum(int(line.split()[0]) for line in used.splitlines()) * 1.15
+    if efi:
+        needed += ESP_MIB * 1024**2
     if info["bytes"] < needed:
         raise InstallError(f"The selected disk needs at least {needed / 1024**3:.1f} GiB for this system.")
 
@@ -238,8 +246,28 @@ def chroot_run(cmd):
     return result
 
 
-def install_bootloader(disk, part, label="ZACKROOT"):
+def block_id(part, field):
+    value = subprocess.check_output(["blkid", "-s", field, "-o", "value", part], text=True).strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]+", value):
+        raise InstallError(f"Cannot read {field} from {part}")
+    return value
+
+
+def install_bootloader(disk, part, label="ZACKROOT", esp=None):
     log("Installing GRUB bootloader...")
+    if esp:
+        boot = Path(TARGET, "boot")
+        loader = boot / "efi/EFI/BOOT"
+        loader.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(EFI_ASSETS / "BOOTX64.EFI", loader / "BOOTX64.EFI")
+        (loader / "zackos.cfg").write_text(
+            f"search --no-floppy --fs-uuid --set=root {block_id(part, 'UUID')}\n"
+            "configfile /boot/grub/grub.cfg\n")
+        fonts = boot / "grub/fonts"
+        fonts.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(EFI_ASSETS / "unicode.pf2", fonts / "unicode.pf2")
+        write_grub_cfg(part, label)
+        return
     # Use the full path, not bare 'grub-install': grub is provided via a
     # /usr/local/sbin symlink into the Nix store, but /usr/local/sbin is not
     # guaranteed to be on $PATH for every shell context this runs under
@@ -291,20 +319,8 @@ def write_grub_cfg(part, label="ZACKROOT"):
 
     run("sync", check=False)
 
-    def blkid_field(field):
-        proc = subprocess.run(f"blkid -c /dev/null -s {field} -o value {part}", shell=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        return proc.stdout.decode().strip()
-
-    fs_uuid = blkid_field("UUID")
-    partuuid = blkid_field("PARTUUID")
-    if not fs_uuid:
-        raise InstallError(f"Could not read filesystem UUID for {part}")
-    if not partuuid:
-        raise InstallError(
-            f"Could not read PARTUUID for {part} - needed for a no-initramfs "
-            "boot. Check the partition table type (expected msdos/dos)."
-        )
+    fs_uuid = block_id(part, "UUID")
+    partuuid = block_id(part, "PARTUUID")
 
     grub_dir = os.path.join(TARGET, "boot/grub")
     os.makedirs(grub_dir, exist_ok=True)
@@ -323,6 +339,7 @@ set timeout=5
 set default=0
 
 insmod part_msdos
+insmod part_gpt
 insmod ext2
 search --no-floppy --fs-uuid --set=root {fs_uuid}
 terminal_output console
@@ -339,14 +356,16 @@ menuentry "Recovery shell" {{
     with open(os.path.join(grub_dir, "grub.cfg"), "w") as f:
         f.write(cfg)
 
-def write_fstab(part, label="ZACKROOT"):
+def write_fstab(part, label="ZACKROOT", esp=None):
     fstab_path = os.path.join(TARGET, "etc/fstab")
     with open(fstab_path, "w") as f:
         # Keep the LFS virtual-filesystem mounts complete: SysVinit's
         # mountvirtfs service expects /run, devtmpfs, and cgroup2 here.
         # Without them an installed root booted with the kernel's default
         # read-only flag stops before getty starts.
-        f.write(f"LABEL={label}  /  ext4  defaults  1  1\n")
+        f.write(f"UUID={block_id(part, 'UUID')}  /  ext4  defaults  1  1\n")
+        if esp:
+            f.write(f"PARTUUID={block_id(esp, 'PARTUUID')} /boot/efi vfat umask=0077 0 0\n")
         f.write("proc  /proc  proc  nosuid,noexec,nodev  0  0\n")
         f.write("sysfs /sys   sysfs nosuid,noexec,nodev  0  0\n")
         f.write("devpts /dev/pts devpts gid=5,mode=620 0 0\n")
@@ -473,15 +492,7 @@ def install_wm(choice, bundled=False):
 def configure_i3_desktop():
     target = Path(TARGET)
     profile = "/nix/var/nix/profiles/default"
-    xorg = target / "etc/X11/xorg.conf.d"
-    xorg.mkdir(parents=True, exist_ok=True)
-    (xorg / "20-nix-modules.conf").write_text(
-        f'Section "Files"\n ModulePath "{profile}/lib/xorg/modules"\nEndSection\n'
-    )
-    (xorg / "40-libinput.conf").write_text(
-        'Section "InputClass"\n Identifier "event devices"\n'
-        ' MatchDevicePath "/dev/input/event*"\n Driver "libinput"\nEndSection\n'
-    )
+    configure_xorg()
     dbus = target / "etc/dbus-1"
     dbus.mkdir(parents=True, exist_ok=True)
     for bus in ("session", "system"):
@@ -566,12 +577,12 @@ def configure_lightdm():
 
 
 def install_plasma_x11():
-    """Install KDE Plasma on X11, deliberately avoiding Wayland/DRM paths."""
+    """Install KDE Plasma and the Xorg libinput driver."""
     wait_for_network()
     export = (f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
               f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; " )
     packages = ["nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
-        "nixpkgs.xorg.xf86inputevdev", "nixpkgs.mesa", "nixpkgs.libglvnd",
+        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd",
         "nixpkgs.dejavu_fonts", "nixpkgs.rxvt-unicode",
         "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
         "nixpkgs.kdePackages.kwin-x11", "nixpkgs.kdePackages.systemsettings",
@@ -580,7 +591,9 @@ def install_plasma_x11():
     result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA " + " ".join(packages))
     if result.returncode != 0: raise InstallError("Failed to install KDE Plasma X11 package set")
     link_nix_bins(["startx", "Xorg", "xauth", "urxvt", "startplasma-x11", "kwin_x11", "plasmashell", "konsole", "dolphin"], require_all=True)
-    register_nix_fonts(); write_xorg_conf(); write_xinitrc("plasma-x11")
+    register_nix_fonts()
+    configure_xorg()
+    write_xinitrc("plasma-x11")
 
 def register_nix_fonts():
     """Point the base LFS system's fontconfig at the Nix-installed fonts.
@@ -607,75 +620,36 @@ def register_nix_fonts():
     chroot_run("fc-cache -f")
 
 
-def write_xorg_conf():
-    """Install the proven no-GPU VirtualBox/LFS X11 configuration."""
-    path = os.path.join(TARGET, "etc/X11/xorg.conf")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write('''Section "ServerLayout"
-    Identifier "layout"
-    Screen 0 "screen0" 0 0
-    InputDevice "kbd" "CoreKeyboard"
-    InputDevice "mouse" "CorePointer"
-EndSection
-Section "ServerFlags"
-    Option "AutoAddDevices" "false"
-EndSection
-Section "Files"
-    ModulePath "/root/.nix-profile/lib/xorg/modules"
-EndSection
-Section "Module"
-    Load "evdev"
-    Load "glx"
-EndSection
-Section "InputDevice"
-    Identifier "kbd"
-    Driver "evdev"
-    Option "Device" "/dev/input/event3"
-EndSection
-Section "InputDevice"
-    Identifier "mouse"
-    Driver "evdev"
-    Option "Device" "/dev/input/event5"
-EndSection
-Section "Device"
-    Identifier "card0"
-    Driver "modesetting"
-    Option "AccelMethod" "none"
-    Option "ShadowFB" "true"
-EndSection
-Section "Screen"
-    Identifier "screen0"
-    Device "card0"
-EndSection
-''')
-    egl_dir = os.path.join(TARGET, "etc/glvnd/egl_vendor.d")
-    os.makedirs(egl_dir, exist_ok=True)
-    with open(os.path.join(egl_dir, "10_mesa.json"), "w") as f:
-        f.write('{"file_path":"/root/.nix-profile/lib/libEGL_mesa.so.0","vendor_name":"mesa"}\n')
-    module_dir = os.path.join(TARGET, "root/.nix-profile/lib/xorg/modules/extensions")
-    os.makedirs(module_dir, exist_ok=True)
-    store = os.path.join(TARGET, "nix/store")
-    for entry in os.listdir(store):
-        candidate = os.path.join(store, entry, "lib/xorg/modules/extensions/libglx.so")
-        if os.path.exists(candidate):
-            link = os.path.join(module_dir, "libglx.so")
-            if os.path.lexists(link): os.remove(link)
-            os.symlink(candidate.replace(TARGET, ""), link)
-            break
+def configure_xorg():
+    """Use Xorg modesetting and libinput hotplug on all VM display adapters."""
+    target = Path(TARGET)
+    profile = "/nix/var/nix/profiles/default"
+    # The inherited image can contain the old fixed evdev configuration.
+    (target / "etc/X11/xorg.conf").unlink(missing_ok=True)
+    xorg = target / "etc/X11/xorg.conf.d"
+    xorg.mkdir(parents=True, exist_ok=True)
+    (xorg / "20-nix-modules.conf").write_text(
+        f'Section "Files"\n ModulePath "{profile}/lib/xorg/modules"\nEndSection\n'
+    )
+    (xorg / "40-libinput.conf").write_text(
+        'Section "InputClass"\n Identifier "event devices"\n'
+        ' MatchDevicePath "/dev/input/event*"\n Driver "libinput"\nEndSection\n'
+    )
+    rules = target / "etc/udev/rules.d/70-zackos-render.rules"
+    rules.parent.mkdir(parents=True, exist_ok=True)
+    rules.write_text('SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="render", MODE="0660"\n')
+
 
 def write_xinitrc(choice="i3"):
-    """Create an X11 session with explicit software-rendering paths."""
+    """Set up the selected X11 session for the new account."""
     if choice == "plasma-x11":
         content = """#!/bin/sh
-export XDG_DATA_DIRS=/root/.nix-profile/share:/usr/share:/usr/local/share
-export XDG_CONFIG_DIRS=/root/.nix-profile/etc/xdg
-export QT_PLUGIN_PATH=/root/.nix-profile/lib/qt-6/plugins
-export QML2_IMPORT_PATH=/root/.nix-profile/lib/qt-6/qml
-export LIBGL_ALWAYS_SOFTWARE=1
-export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-export __GLX_VENDOR_LIBRARY_NAME=mesa
-export LD_LIBRARY_PATH=/root/.nix-profile/lib:/run/opengl-driver/lib
+profile=/nix/var/nix/profiles/default
+export PATH="$profile/bin:/usr/local/bin:/usr/bin:/bin"
+export XDG_DATA_DIRS="$profile/share:/usr/local/share:/usr/share"
+export XDG_CONFIG_DIRS="$profile/etc/xdg:/etc/xdg"
+export QT_PLUGIN_PATH="$profile/lib/qt-6/plugins"
+export QML2_IMPORT_PATH="$profile/lib/qt-6/qml"
 exec dbus-run-session -- startplasma-x11
 """
     else:
@@ -689,21 +663,11 @@ exec dbus-run-session -- startplasma-x11
         with open(helper, "w") as f:
             f.write("""#!/bin/sh
 set -eu
-mkdir -p /run/dbus /run/opengl-driver/lib /run/user/0
-chmod 700 /run/user/0
-for lib in libGLX_mesa.so.0 libGL.so.1 libglapi.so.0 libGLX.so.0; do
-  found=$(find /nix/store -path "*/lib/$lib" 2>/dev/null | head -1 || true)
-  [ -n "$found" ] && ln -sf "$found" "/run/opengl-driver/lib/$lib"
-done
-[ -S /run/dbus/system_bus_socket ] || dbus-daemon --system --fork || true
-rm -f /tmp/.X*-lock /tmp/.X11-unix/* /root/.serverauth.*
-export XDG_DATA_DIRS=/root/.nix-profile/share:/usr/share:/usr/local/share
-export XDG_CONFIG_DIRS=/root/.nix-profile/etc/xdg
-export QT_PLUGIN_PATH=/root/.nix-profile/lib/qt-6/plugins
-export QML2_IMPORT_PATH=/root/.nix-profile/lib/qt-6/qml
-export LIBGL_ALWAYS_SOFTWARE=1 MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-export __GLX_VENDOR_LIBRARY_NAME=mesa LD_LIBRARY_PATH=/root/.nix-profile/lib:/run/opengl-driver/lib
-exec dbus-run-session -- startx -- :0 vt7
+profile=/nix/var/nix/profiles/default
+export PATH="$profile/bin:/usr/local/bin:/usr/bin:/bin"
+mkdir -p /run/dbus
+[ -S /run/dbus/system_bus_socket ] || dbus-daemon --system --fork
+exec startx -- :0 vt7
 """)
         os.chmod(helper, 0o755)
 
@@ -842,7 +806,7 @@ def install_init(choice, part=None, bundled=False):
     )
     if not bundled:
         chroot_run(export + "nix-env -iA nixpkgs.runit")
-    link_nix_bins(["runit", "runsvdir", "runsv", "sv", "chpst", "svlogd"], require_all=True)
+    link_nix_bins(["runit", "runit-init", "runsvdir", "runsv", "sv", "chpst", "svlogd"], require_all=True)
 
     etc_runit = os.path.join(TARGET, "etc/runit")
     service_dir = os.path.join(TARGET, "etc/service")
@@ -945,39 +909,20 @@ def install_init(choice, part=None, bundled=False):
         "  udevadm trigger 2>/dev/null || true\n"
         "  udevadm settle --timeout=10 2>/dev/null || true\n"
         "fi\n"
+        "if grep -qs ' /boot/efi ' /etc/fstab; then mountpoint -q /boot/efi || mount /boot/efi; fi\n"
         "exec /usr/local/bin/runsvdir -P /etc/service\n"
     )
     with open(os.path.join(etc_runit, "2"), "w") as f:
         f.write(stage2_lines)
-    # BUG FIX (2026-08-08): plain `reboot`/`poweroff`/`shutdown` (no -f)
-    # hung forever, forcing hard VirtualBox resets - which in turn
-    # corrupted /etc/shadow writes badly enough that login then rejected
-    # the correct password on every subsequent boot ("Login incorrect"
-    # even with byte-identical credentials). Root cause: the reboot/halt/
-    # poweroff/shutdown binaries on this system are SysVinit's own
-    # (built expecting to write a runlevel request to /run/initctl and
-    # have SysVinit's PID1 read and act on it) - but PID1 here is runit,
-    # which never creates or reads that fifo, so those commands just
-    # blocked waiting for a response that will never come. Stage 3 itself
-    # only stopped services and returned - it never performed the actual
-    # power action either. Fixed properly in install_shutdown_wrappers():
-    # /sbin/reboot, /sbin/halt, /sbin/poweroff, /sbin/shutdown are
-    # replaced with tiny scripts that stop services, sync, remount root
-    # read-only, then trigger the kernel directly via
-    # /proc/sysrq-trigger - no init IPC protocol involved at all, so it
-    # cannot hang regardless of which init is PID1. Stage 3 (still run via
-    # those wrappers) keeps the service force-stop loop and adds an
-    # explicit sync as defense in depth.
+    # PID 1 runs stage 3 after leaving the service-supervision stage.
     with open(os.path.join(etc_runit, "3"), "w") as f:
-        f.write(
-            "#!/bin/sh\n"
-            + runit_path_export
-            + "for service in /etc/service/*; do\n"
-            "  [ -d \"$service\" ] || continue\n"
-            "  /usr/local/bin/sv -w 5 force-stop \"$service\" 2>/dev/null || true\n"
-            "done\n"
-            "sync\n"
-        )
+        f.write("#!/bin/sh\n" + runit_path_export +
+                "sv -w 5 force-stop /etc/service/* 2>/dev/null || true\n"
+                "/sbin/killall5 -15 2>/dev/null || true\nsleep 1\n"
+                "/sbin/killall5 -9 2>/dev/null || true\n"
+                "swapoff -a 2>/dev/null || true\nsync\n"
+                "umount -a -r -t noproc,nosysfs,nodevtmpfs,notmpfs 2>/dev/null || true\n"
+                "mount -n -o remount,ro /\nsync\n")
     for fname in ("1", "2", "3"):
         os.chmod(os.path.join(etc_runit, fname), 0o755)
 
@@ -1040,6 +985,8 @@ def install_init(choice, part=None, bundled=False):
     # controlling) fixed authentication immediately with the unmodified
     # password - proving this was a tty/session bug, never a password one.
     # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
+    write_service("power", "/usr/local/bin/zackos-power --serve runit")
+    write_service("acpid", "/usr/sbin/acpid -f")
     if i3_desktop:
         write_service("dbus", "/usr/local/sbin/zackos-dbus")
         write_service("lightdm", display_command)
@@ -1094,87 +1041,41 @@ def install_init(choice, part=None, bundled=False):
         f.write(f"#!/bin/sh\nexec {runit_bin}\n")
     os.chmod(sbin_init, 0o755)
 
-    install_shutdown_wrappers()
 
 
-def install_shutdown_wrappers():
-    """Replace /sbin/{reboot,halt,poweroff,shutdown} with init-agnostic
-    scripts so they work under runit (see the stage-3 bug-fix note above
-    for the full root cause). Backs up whatever SysVinit-provided binary
-    was there first, matching the existing /sbin/init.sysvinit convention.
-    """
-    sbin = os.path.join(TARGET, "sbin")
-    os.makedirs(sbin, exist_ok=True)
-
-    def _backup(name):
-        p = os.path.join(sbin, name)
-        if os.path.isfile(p) and not os.path.islink(p) and not os.path.lexists(p + ".sysvinit"):
-            shutil.copy2(p, p + ".sysvinit")
-
-    # BUG FIX (2026-08-09): poweroff hung indefinitely (observed live: still
-    # blocked 49+ seconds later, "kill: run: /etc/service/agetty-ttyS0: ...
-    # want down, got TERM"). Root cause: `poweroff` is normally typed
-    # interactively from the serial console, i.e. from a shell that is a
-    # session/process-tree DESCENDANT of the very agetty-ttyS0 the stop loop
-    # is trying to gracefully stop. `sv -w 5 force-stop` sends TERM, then
-    # (per runit semantics) is supposed to escalate to KILL after the
-    # timeout - but agetty's own SIGTERM handler tries to clean up/hang up
-    # the line and, on this exact self-referential case (the requesting
-    # shell is still alive underneath it, still holding the tty open),
-    # never actually completes, so runsv's supervisor sees it as still up
-    # indefinitely and the whole shutdown script blocks on that one line
-    # forever - never reaching sync/remount-ro/sysrq at all.
-    # Fix: getty services hold no state worth preserving before a raw
-    # poweroff (nothing writes through them) - use `sv kill` for them
-    # instead, which sends SIGKILL and returns immediately without
-    # waiting for the down state, so it can never self-deadlock against
-    # the caller's own controlling tty. Non-getty services (dhcpcd,
-    # udevd - anything that might be mid-write) keep the graceful
-    # TERM-then-wait-then-KILL via force-stop.
-    stop_services = """for service in /etc/service/*; do
-  [ -d "$service" ] || continue
-  case "$(basename "$service")" in
-    agetty-*) /usr/local/bin/sv kill "$service" 2>/dev/null || true ;;
-    *) /usr/local/bin/sv -w 5 force-stop "$service" 2>/dev/null || true ;;
-  esac
-done
-sync
-mount -o remount,ro / 2>/dev/null || true
-echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
-"""
-
-    def _write(name, sysrq_char):
-        _backup(name)
-        # On LFS, reboot and poweroff are links to halt. Replace each directory
-        # entry so the poweroff script cannot overwrite the reboot action.
-        path = Path(sbin, name)
-        tmp = path.with_suffix(".zackos-new")
-        tmp.write_text("#!/bin/sh\n" + stop_services + f"echo {sysrq_char} > /proc/sysrq-trigger\n")
-        tmp.chmod(0o755)
-        tmp.replace(path)
-
-    _write("reboot", "b")     # SysRq b = immediate reboot
-    _write("poweroff", "o")   # SysRq o = power off
-    _write("halt", "o")       # no separate "halt and don't power off" via
-                              # sysrq; poweroff is the closest safe stop.
-
-    shutdown_path = os.path.join(sbin, "shutdown")
-    _backup("shutdown")
-    with open(shutdown_path, "w") as f:
-        f.write("""#!/bin/sh
-# Minimal init-agnostic shutdown(8): only cares whether -r (reboot) was
-# requested; everything else (delay, -h, -P, 'now', etc.) is accepted and
-# ignored since this system has no multi-user warning/wall step to perform.
-case " $* " in
-  *' -r '*) exec /sbin/reboot ;;
-  *) exec /sbin/poweroff ;;
-esac
-""")
-    os.chmod(shutdown_path, 0o755)
+def configure_power(init, username=None, live=False):
+    target = Path(TARGET)
+    for group in ("power", "render"):
+        run(["chroot", TARGET, "/usr/sbin/groupadd", "-f", "-r", group])
+        if username:
+            run(["chroot", TARGET, "/usr/sbin/usermod", "-aG", group, username])
+    helper = target / "usr/local/bin/zackos-power"
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(__file__).with_name("power") / "zackos-power", helper)
+    helper.chmod(0o755)
+    rules = target / "etc/acpi/events"
+    rules.mkdir(parents=True, exist_ok=True)
+    (rules / "zackos-power").write_text("event=^button/power.*\naction=/usr/local/bin/zackos-power poweroff\n")
+    if init == "runit":
+        for name in ("shutdown", "halt", "reboot", "poweroff"):
+            path = target / "sbin" / name
+            backup = path.with_name(name + ".sysvinit")
+            if path.is_file() and not path.is_symlink() and not backup.exists():
+                shutil.copy2(path, backup)
+            temp = path.with_name(name + ".zackos-new")
+            temp.unlink(missing_ok=True)
+            temp.symlink_to("/usr/local/bin/zackos-power")
+            temp.replace(path)
+    elif not live:
+        path = target / "etc/inittab"
+        entries = [line for line in path.read_text().splitlines() if not line.startswith(("zp:", "za:"))]
+        entries += ["zp:2345:respawn:/usr/local/bin/zackos-power --serve sysvinit",
+                    "za:2345:respawn:/usr/sbin/acpid -f"]
+        path.write_text("\n".join(entries) + "\n")
 
 
 def cleanup_mounts():
-    for d in ("dev/pts", "dev", "sys", "proc"):
+    for d in ("dev/pts", "dev", "sys", "proc", "boot/efi"):
         run(f"umount -lf {TARGET}/{d}", check=False)
     run(f"umount -lf {TARGET}", check=False)
 
@@ -1207,15 +1108,28 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
             raise InstallError("The installation target is already mounted")
         report = progress or (lambda step, message: None)
         report(0, "Checking available space")
-        check_capacity(disk, bundled)
+        efi = Path("/sys/firmware/efi").is_dir()
+        if efi and not all(path.is_file() for path in
+                           (EFI_ASSETS / "BOOTX64.EFI", EFI_ASSETS / "unicode.pf2", Path("/usr/sbin/mkfs.fat"))):
+            raise InstallError("The installation media is missing its UEFI tools.")
+        if not Path("/usr/sbin/acpid").is_file():
+            raise InstallError("The installation media is missing its ACPI power service.")
+        check_capacity(disk, bundled, efi)
         report(0, "Preparing the disk")
-        part = partition_disk(disk, identity)
+        part = partition_disk(disk, identity, efi)
+        esp = partition_path(disk, 1) if efi else None
+        if esp:
+            run(["/usr/sbin/mkfs.fat", "-F", "32", "-n", "ZACKEFI", esp])
         format_partition(part)
         mount_target(part)
         try:
             report(1, "Copying the base system")
             copy_system()
-            write_fstab(part)
+            if esp:
+                mountpoint = Path(TARGET, "boot/efi")
+                mountpoint.mkdir(parents=True, exist_ok=True)
+                run(["mount", "-t", "vfat", "-o", "umask=0077", esp, str(mountpoint)])
+            write_fstab(part, esp=esp)
             write_profile(profile)
             set_hostname(hostname)
             set_root_password(root_password)
@@ -1227,9 +1141,10 @@ def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",
             if username:
                 create_user(username, user_password or root_password,
                             shell=DESKTOP_SHELL if profile.desktop == "i3" else "/bin/bash")
+            configure_power(profile.init, username)
             install_init(profile.init, part, bundled)
             report(4, "Installing GRUB")
-            install_bootloader(disk, part)
+            install_bootloader(disk, part, esp=esp)
             if profile.desktop == "i3" and username:
                 marker = Path(TARGET, "boot/grub/zackos-first-user")
                 marker.write_text(username + "\n")

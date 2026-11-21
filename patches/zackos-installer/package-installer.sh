@@ -8,9 +8,11 @@ cp "$src"/core.py "$src"/zackinstall.py "$src"/zackinstall "$dst/"
 cp "$src"/providers/*.py "$dst/providers/"
 mkdir -p "$dst/live"
 cp "$src"/live/*.py "$src"/live/*.css "$src"/live/*.desktop "$dst/live/"
+mkdir -p "$dst/power"
+cp "$src/power/zackos-power" "$dst/power/"
 cp -R "$src/branding" "$src/desktop" "$dst/"
 cp "$src/boot/installed-init" "$src/boot/splash-done" "$dst/boot/"
 "$src/boot/build-splash.sh" "$dst/boot/zack-splash"
 find "$dst" -type d -exec chmod 755 {} +
 find "$dst" -type f -exec chmod 644 {} +
-chmod 755 "$dst/zackinstall" "$dst/desktop/zackos-display" "$dst/boot/"*
+chmod 755 "$dst/power/zackos-power" "$dst/zackinstall" "$dst/desktop/zackos-display" "$dst/boot/"*

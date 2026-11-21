@@ -1,0 +1,163 @@
+#!/usr/bin/python3 -I
+"""Local power requests for ZackOS. PID 1 owns service shutdown and the final action."""
+from datetime import datetime, timedelta
+import argparse
+import grp
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import socketserver
+import struct
+import subprocess
+import sys
+import time
+
+STATE = Path("/run/zackos-power")
+SOCKET = STATE / "control"
+PENDING = STATE / "pending.json"
+
+
+def schedule_time(value):
+    if value == "now":
+        return None
+    if re.fullmatch(r"\+[0-9]{1,7}", value):
+        minutes = int(value[1:])
+        return int(time.time()) + minutes * 60 if minutes else None
+    if re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", value):
+        now = datetime.now()
+        hour, minute = map(int, value.split(":"))
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target < now:
+            target += timedelta(days=1)
+        return int(target.timestamp())
+    raise ValueError("Use now, +minutes, or a 24-hour HH:MM time.")
+
+
+def command(name, args):
+    if name == "shutdown":
+        cli = argparse.ArgumentParser(prog=name)
+        flags = cli.add_mutually_exclusive_group()
+        flags.add_argument("-c", dest="action", action="store_const", const="cancel")
+        flags.add_argument("-r", dest="action", action="store_const", const="reboot")
+        flags.add_argument("-h", "-H", "-P", dest="action", action="store_const", const="poweroff")
+        cli.add_argument("arguments", nargs="*", metavar="TIME_OR_MESSAGE")
+        options = cli.parse_args(args)
+        action = options.action or "poweroff"
+        if action == "cancel":
+            return {"action": action}
+        when = options.arguments[0] if options.arguments else "+1"
+        return {"action": action, "at": schedule_time(when)}
+    if name == "zackos-power":
+        cli = argparse.ArgumentParser(prog=name)
+        cli.add_argument("action", choices=("poweroff", "reboot", "cancel", "status"))
+        name = cli.parse_args(args).action
+    elif args:
+        raise ValueError(f"{name} accepts no arguments. Use shutdown to schedule an action.")
+    if name == "halt":
+        name = "poweroff"
+    return {"action": name}
+
+
+class PowerServer(socketserver.UnixStreamServer):
+    def request_power(self, uid, request):
+        action = request.get("action")
+        at = request.get("at")
+        if action not in ("poweroff", "reboot", "cancel", "status"):
+            raise ValueError("Unknown power action.")
+        if at is not None and (type(at) is not int or not 0 <= at <= 2**40):
+            raise ValueError("Invalid shutdown time.")
+        if action == "status":
+            return self.pending or {"action": "none"}
+        if uid != 0 and (at is not None or action == "cancel"):
+            raise ValueError("Only root can schedule or cancel a shutdown.")
+        if action == "cancel":
+            if self.issued:
+                raise ValueError("Shutdown is already in progress.")
+            PENDING.unlink(missing_ok=True)
+            self.pending = None
+            return {"action": "cancelled"}
+        if self.pending or self.issued:
+            raise ValueError("A shutdown is already pending.")
+        pending = {"action": action, "at": at if at is not None else int(time.time())}
+        temporary = STATE / "pending.new"
+        temporary.write_text(json.dumps(pending))
+        temporary.replace(PENDING)
+        self.pending = pending
+        return pending
+
+
+class Request(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.connection.settimeout(2)
+        try:
+            _, uid, _ = struct.unpack("3i", self.connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            line = self.rfile.readline(257)
+            if len(line) > 256 or not line.endswith(b"\n"):
+                raise ValueError("Invalid power request.")
+            request = json.loads(line)
+            if not isinstance(request, dict):
+                raise ValueError("Invalid power request.")
+            result = self.server.request_power(uid, request)
+        except (ValueError, OSError) as exc:
+            result = {"error": str(exc)}
+        try:
+            self.wfile.write(json.dumps(result).encode() + b"\n")
+        except OSError:
+            pass
+
+
+def serve(init):
+    if os.geteuid() != 0:
+        raise PermissionError("The power service requires root.")
+    os.umask(0o077)
+    STATE.mkdir(mode=0o755, exist_ok=True)
+    STATE.chmod(0o755)
+    SOCKET.unlink(missing_ok=True)
+    with PowerServer(str(SOCKET), Request) as server:
+        os.chown(SOCKET, 0, grp.getgrnam("power").gr_gid)
+        os.chmod(SOCKET, 0o660)
+        server.pending = json.loads(PENDING.read_text()) if PENDING.exists() else None
+        server.issued = False
+        while True:
+            server.timeout = 5
+            if server.pending:
+                delay = server.pending["at"] - time.time()
+                if delay <= 0:
+                    reboot = server.pending["action"] == "reboot"
+                    args = (["/usr/local/bin/runit-init", "6" if reboot else "0"] if init == "runit"
+                            else ["/sbin/shutdown", "-r" if reboot else "-h", "now"])
+                    # A detached SysV shutdown can stop this service. runit-init signals PID 1.
+                    subprocess.Popen(args, start_new_session=True, stdin=subprocess.DEVNULL)
+                    server.issued = True
+                    server.pending = None
+                    PENDING.unlink(missing_ok=True)
+                else:
+                    server.timeout = min(delay, server.timeout)
+            server.handle_request()
+
+
+def main():
+    args = sys.argv[1:]
+    if args in (["--serve", "runit"], ["--serve", "sysvinit"]):
+        serve(args[1])
+        return
+    request = command(Path(sys.argv[0]).name, args)
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.settimeout(5)
+        sock.connect(str(SOCKET))
+        sock.sendall(json.dumps(request).encode() + b"\n")
+        with sock.makefile("rb") as reply:
+            result = json.loads(reply.readline(2048))
+    if "error" in result:
+        raise ValueError(result["error"])
+    if request["action"] == "status" or request.get("at"):
+        print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError) as error:
+        sys.exit(str(error))
