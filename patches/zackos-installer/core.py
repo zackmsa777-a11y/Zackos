@@ -531,11 +531,19 @@ def configure_dbus():
     service.chmod(0o755)
 
 
+def prepare_x11_session():
+    target = Path(TARGET)
+    (target / "tmp").chmod(0o1777)
+    (target / "root").chmod(0o700)
+    (target / "etc/shadow").chmod(0o600)
+    configure_xorg()
+    configure_dbus()
+
+
 def configure_i3_desktop():
     target = Path(TARGET)
     profile = "/nix/var/nix/profiles/default"
-    configure_xorg()
-    configure_dbus()
+    prepare_x11_session()
     session = target / "etc/X11/zackos-session"
     session.write_text(
         "#!/bin/sh\n"
@@ -555,9 +563,6 @@ def configure_lightdm(session_name):
     target = Path(TARGET)
     src = Path(__file__).with_name("desktop") / "login"
     profile = "/nix/var/nix/profiles/default"
-    (target / "tmp").chmod(0o1777)
-    (target / "root").chmod(0o700)
-    (target / "etc/shadow").chmod(0o600)
     conf = target / "etc/lightdm/lightdm.conf"
     conf.parent.mkdir(parents=True, exist_ok=True)
     conf.write_text((src / "lightdm.conf").read_text().replace("@SESSION@", session_name))
@@ -618,8 +623,7 @@ def install_plasma_x11():
     if result.returncode != 0: raise InstallError("Failed to install KDE Plasma X11 package set")
     link_nix_bins(["startx", "Xorg", "xauth", "urxvt", "startplasma-x11", "kwin_x11", "plasmashell", "konsole", "dolphin"], require_all=True)
     register_nix_fonts()
-    configure_xorg()
-    configure_dbus()
+    prepare_x11_session()
     desktop = Path(__file__).with_name("desktop") / "plasma"
     target = Path(TARGET)
     # Copy the shared Orbit artwork into a self-contained KDE wallpaper package.
