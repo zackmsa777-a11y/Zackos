@@ -109,10 +109,17 @@ class Serial:
 
     def run(self, body, timeout=40):
         self.write_script("set -e\n" + body, "/run/zack-test.sh")
-        self.send("bash /run/zack-test.sh >/run/zack-test.out 2>&1; code=$?; "
-                  "printf '\\nZS%s\\n' \"$code\"; base64 -w0 /run/zack-test.out; printf '\\nZE\\n'")
+        # The serial console also carries service logs during startup. Frame
+        # the entire reply together and reread the saved output if interrupted.
+        reply = "printf '\\nZS%s:%s:ZE\\n' \"$code\" \"$(base64 -w0 /run/zack-test.out)\""
+        self.send("bash /run/zack-test.sh >/run/zack-test.out 2>&1; code=$?; " + reply)
         response = self.until(self.prompt, timeout)
-        result = re.search(r"(?m)^ZS(\d+)\n([A-Za-z0-9+/=]*)\nZE", response)
+        pattern = r"(?m)^ZS(\d+):([A-Za-z0-9+/=]*):ZE$"
+        result = re.search(pattern, response)
+        if not result:
+            self.send(reply)
+            response = self.until(self.prompt, 20)
+            result = re.search(pattern, response)
         if not result:
             raise RuntimeError("Incomplete serial command response: " + response[-700:])
         out = base64.b64decode(result[2]).decode(errors="replace").strip()
