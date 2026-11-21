@@ -10,7 +10,9 @@ mkdir -p "$dst/live"
 cp "$src"/live/*.py "$src"/live/*.css "$src"/live/*.desktop "$dst/live/"
 mkdir -p "$dst/power"
 cp "$src/power/zackos-power" "$dst/power/"
-cp -R "$src/branding" "$src/desktop" "$dst/"
+# The live init overlays this payload onto an existing copy with BusyBox cp.
+# Materialize shared artwork so repeated boots can safely overwrite each file.
+cp -RL "$src/branding" "$src/desktop" "$dst/"
 cp "$src/boot/installed-init" "$src/boot/splash-done" "$dst/boot/"
 "$src/boot/build-splash.sh" "$dst/boot/zack-splash"
 find "$dst" -type d -exec chmod 755 {} +
