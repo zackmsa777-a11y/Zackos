@@ -28,13 +28,16 @@ Boot-verified end to end: reaches a real login prompt, logs in, gives you a work
 
 ## Get it
 
-For a persistent i3 desktop, boot the i3 installer ISO with 4 GiB of RAM,
-VirtIO graphics, and a 24 GiB virtual disk. Log in to the installer as
-`root` with password `zackos` and run `zackinstall`. The desktop install
-downloads Firefox, Thunar and the X11 packages from Nix. On success the
-installer reboots into the new user’s i3 desktop. The disk boots through
-a themed GRUB menu and an animated ZackOS splash. See the
-[installer and QEMU instructions](patches/zackos-installer/README.md).
+Download the i3 ISO parts and follow the joining and checksum instructions
+on the [v5.8 release page](https://github.com/zackmsa777-a11y/Zackos/releases/tag/v5.8-i3-live-installer).
+For QEMU, use x86-64 BIOS, 2 virtual CPUs, 4 GiB of RAM, VirtIO graphics,
+and a 24 GiB virtual disk.
+
+Choose **Try or install ZackOS** in GRUB. ZackOS signs you in as `live`
+and opens the graphical installer inside i3. Select **Try ZackOS** to
+explore, or install the default i3 desktop offline. After reboot, choose the account you created
+on the ZackOS LightDM screen. Press **Super+Enter** to open Kitty with Zsh
+and Fastfetch. [Installer and QEMU instructions](patches/zackos-installer/README.md)
 
 Older live images have different download, login and persistence instructions.
 Use the notes for the image you downloaded. [Releases](../../releases)
@@ -91,7 +94,8 @@ Booted this exact build to a full login prompt, logged in as root, ran `uname -a
 
 | Tag | What it is |
 |---|---|
-| `v3.0-live-squashfs-iso` | **Current** — self-contained live-boot ISO, SquashFS+OverlayFS, boots to login on its own |
+| `v5.8-i3-live-installer` | Live i3 desktop, offline graphical installer, and ZackOS LightDM sign-in |
+| `v3.0-live-squashfs-iso` | Self-contained live-boot ISO with SquashFS and OverlayFS |
 | `v2.0-iso-xfce` | GRUB-shell ISO + companion raw disk, full XFCE desktop |
 | `v1.0`–`v1.5` | Early raw-disk-image milestones (boot, fastfetch, BLFS X11 base) |
 
