@@ -46,21 +46,34 @@ class Serial:
         self.sock = connect(path)
         self.buf = b""
         self.sock.settimeout(1)
+        self.login(password, auth)
+
+    def login(self, password, auth):
         self.until(b"login:", 200)
-        self.send("root")
-        self.until(b"Password:", 15)
-        self.send(password)
-        self.until(b"# ", 35)
+        for _ in range(4):
+            self.send("root")
+            if self.expect((b"Password:", b"login:"), 40)[0] == b"login:":
+                continue
+            self.send(password)
+            if self.expect((b"# ", b"login:"), 40)[0] == b"# ":
+                break
+        else:
+            raise RuntimeError("Console login did not reach the root shell")
         self.send("set +o history; set +o emacs; set +o vi; stty -echo cols 240; "
                   f"export PS1=ZACK_''TEST'>' DISPLAY=:0 XAUTHORITY={auth} PATH={PATH}; umask 077")
         self.until(self.prompt, 10)
 
     def until(self, marker, timeout):
+        return self.expect((marker,), timeout)[1]
+
+    def expect(self, markers, timeout):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if marker in self.buf:
+            matches = [(self.buf.index(m), m) for m in markers if m in self.buf]
+            if matches:
+                _, marker = min(matches)
                 head, self.buf = self.buf.split(marker, 1)
-                return head.decode(errors="replace").replace("\r", "").strip()
+                return marker, head.decode(errors="replace").replace("\r", "").strip()
             try:
                 block = self.sock.recv(16384)
                 if not block:
@@ -68,7 +81,7 @@ class Serial:
                 self.buf += block
             except socket.timeout:
                 continue
-        raise TimeoutError(f"Waiting for {marker!r}: {self.buf[-1800:]!r}")
+        raise TimeoutError(f"Waiting for {markers!r}: {self.buf[-1800:]!r}")
 
     def send(self, command):
         self.sock.sendall(command.encode() + b"\n")
@@ -303,19 +316,13 @@ def check_vm(vm, opt):
     if opt.init == "runit":
         print(disk.run("shutdown -c; shutdown -r +5; zackos-power status | grep reboot; "
                        "shutdown -c; zackos-power status | grep none; "
-                       "if shutdown -x; then exit 1; fi; if su -s /bin/sh -c 'shutdown -h +1' tester; then exit 1; fi"))
+                       "if shutdown -x; then exit 1; fi; if su -s /bin/sh -c '/sbin/shutdown -h +1' tester; then exit 1; fi"))
     disk.run("if su -s /bin/sh -c '/usr/local/bin/zackos-power poweroff' nobody; then exit 1; fi; "
              "su -s /bin/sh -c '/usr/local/bin/zackos-power status' tester")
     boot_id = disk.run("cat /proc/sys/kernel/random/boot_id")
     disk.send("su -s /bin/sh -c '/usr/local/bin/zackos-power reboot' tester")
     # The serial connection survives a hardware reset on both hypervisors.
-    disk.until(b"login:", 150)
-    disk.send("root")
-    disk.until(b"Password:", 10)
-    disk.send(root_pass)
-    disk.until(b"# ", 20)
-    disk.send("set +o history; set +o emacs; set +o vi; stty -echo; export PS1=ZACK_''TEST'>' PATH=" + PATH)
-    disk.until(disk.prompt, 10)
+    disk.login(root_pass, DISK_AUTH)
     assert disk.run("cat /proc/sys/kernel/random/boot_id") != boot_id, "The VM did not restart"
     disk.wait("test -S /run/zackos-power/control && pgrep -x acpid")
     if opt.shutdown == "acpi":

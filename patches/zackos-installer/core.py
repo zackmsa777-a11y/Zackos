@@ -504,10 +504,9 @@ def install_wm(choice, bundled=False):
         write_i3_config()
 
 
-def configure_i3_desktop():
+def configure_dbus():
     target = Path(TARGET)
     profile = "/nix/var/nix/profiles/default"
-    configure_xorg()
     dbus = target / "etc/dbus-1"
     dbus.mkdir(parents=True, exist_ok=True)
     for bus in ("session", "system"):
@@ -530,6 +529,13 @@ def configure_i3_desktop():
         f"exec {profile}/bin/dbus-daemon --system --nofork --nopidfile\n"
     )
     service.chmod(0o755)
+
+
+def configure_i3_desktop():
+    target = Path(TARGET)
+    profile = "/nix/var/nix/profiles/default"
+    configure_xorg()
+    configure_dbus()
     session = target / "etc/X11/zackos-session"
     session.write_text(
         "#!/bin/sh\n"
@@ -597,7 +603,7 @@ def install_plasma_x11():
     export = (f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
               f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; " )
     packages = ["nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
-        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd",
+        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd", "nixpkgs.dbus",
         "nixpkgs.dejavu_fonts", "nixpkgs.rxvt-unicode",
         "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
         "nixpkgs.kdePackages.kwin-x11", "nixpkgs.kdePackages.systemsettings",
@@ -608,6 +614,7 @@ def install_plasma_x11():
     link_nix_bins(["startx", "Xorg", "xauth", "urxvt", "startplasma-x11", "kwin_x11", "plasmashell", "konsole", "dolphin"], require_all=True)
     register_nix_fonts()
     configure_xorg()
+    configure_dbus()
     write_xinitrc("plasma-x11")
 
 def register_nix_fonts():
@@ -665,7 +672,14 @@ export XDG_DATA_DIRS="$profile/share:/usr/local/share:/usr/share"
 export XDG_CONFIG_DIRS="$profile/etc/xdg:/etc/xdg"
 export QT_PLUGIN_PATH="$profile/lib/qt-6/plugins"
 export QML2_IMPORT_PATH="$profile/lib/qt-6/qml"
-exec dbus-run-session -- startplasma-x11
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    XDG_RUNTIME_DIR=$(mktemp -d) || exit 1
+    export XDG_RUNTIME_DIR
+    trap 'rm -rf -- "$XDG_RUNTIME_DIR"' EXIT
+    dbus-run-session -- startplasma-x11
+else
+    exec dbus-run-session -- startplasma-x11
+fi
 """
     else:
         content = "#!/bin/sh\nexec /etc/X11/zackos-session\n"
@@ -673,6 +687,7 @@ exec dbus-run-session -- startplasma-x11
         path = os.path.join(TARGET, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f: f.write(content)
+        os.chmod(path, 0o755)
     if choice == "plasma-x11":
         helper = os.path.join(TARGET, "root/start-kde.sh")
         with open(helper, "w") as f:
@@ -680,9 +695,7 @@ exec dbus-run-session -- startplasma-x11
 set -eu
 profile=/nix/var/nix/profiles/default
 export PATH="$profile/bin:/usr/local/bin:/usr/bin:/bin"
-mkdir -p /run/dbus
-[ -S /run/dbus/system_bus_socket ] || dbus-daemon --system --fork
-exec startx -- :0 vt7
+exec "$profile/bin/startx" "$HOME/.xinitrc" -- "$profile/bin/Xorg" :0 vt7 -nolisten tcp
 """)
         os.chmod(helper, 0o755)
 
@@ -802,12 +815,14 @@ def repair_sysv_console():
 
 def install_init(choice, part=None, bundled=False):
     i3_desktop = (Path(TARGET) / "etc/lightdm/lightdm.conf").exists()
+    desktop_bus = (Path(TARGET) / "usr/local/sbin/zackos-dbus").is_file()
     display_command = "/usr/local/lib/zackos-installer/desktop/zackos-display"
     if choice == "sysvinit":
         repair_sysv_console()
-        if i3_desktop:
-            with (Path(TARGET) / "etc/inittab").open("a") as inittab:
+        with (Path(TARGET) / "etc/inittab").open("a") as inittab:
+            if desktop_bus:
                 inittab.write("db:2345:respawn:/usr/local/sbin/zackos-dbus\n")
+            if i3_desktop:
                 inittab.write(f"xd:2345:respawn:{display_command}\n")
         log("Keeping sysvinit with explicit tty1/ttyS0 getty configuration.")
         return
@@ -968,8 +983,9 @@ def install_init(choice, part=None, bundled=False):
     # ttyS0 is required for QEMU serial verification; tty1 is required on hardware.
     write_service("power", "/usr/local/bin/zackos-power --serve runit")
     write_service("acpid", "/usr/sbin/acpid -f")
-    if i3_desktop:
+    if desktop_bus:
         write_service("dbus", "/usr/local/sbin/zackos-dbus")
+    if i3_desktop:
         write_service("lightdm", display_command)
     write_service("agetty-tty1", "setsid -c /sbin/agetty tty1 38400 linux")
     write_service("agetty-ttyS0", "setsid -c /sbin/agetty -L 115200 ttyS0 vt100")
