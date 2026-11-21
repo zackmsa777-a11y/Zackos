@@ -74,12 +74,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends python3-pil
           if [[ $PLATFORM == qemu ]]; then
             sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf
-            if [[ $ACCEL == kvm ]]; then
-              echo 'KERNEL=="kvm", GROUP="kvm", MODE="0660"' | sudo tee /etc/udev/rules.d/99-zackos-kvm.rules
-              sudo udevadm control --reload-rules
-              sudo udevadm trigger --name-match=kvm
-              sudo udevadm settle
-            fi
             qemu-system-x86_64 --version
           else
             pkg="$RUNNER_TEMP/virtualbox.deb"
@@ -116,7 +110,7 @@ jobs:
             sudo /usr/bin/python3 -u "${args[@]}"
           elif [[ $ACCEL == kvm ]]; then
             if [[ $VIDEO == virtio ]]; then args+=(--move-to-sata); fi
-            sudo -u "$USER" -g kvm /usr/bin/python3 -u "${args[@]}" --accel kvm
+            sudo /usr/bin/python3 -u "${args[@]}" --accel kvm
           else
             /usr/bin/python3 -u "${args[@]}" --accel tcg
           fi
