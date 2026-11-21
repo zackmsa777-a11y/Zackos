@@ -1,0 +1,24 @@
+name: Build ZackOS kernel
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'release/**']
+    paths: ['patches/kernel-configs/**', 'patches/zackos-installer/boot/build-kernel.sh', '.github/workflows/kernel.yml']
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y bc bison flex libelf-dev libssl-dev kmod
+      - run: patches/zackos-installer/boot/build-kernel.sh "$RUNNER_TEMP/zackos-kernel.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zackos-kernel
+          path: ${{ runner.temp }}/zackos-kernel.tar.gz
+          compression-level: 0
+          retention-days: 14
