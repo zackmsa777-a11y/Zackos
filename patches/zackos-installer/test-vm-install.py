@@ -109,10 +109,17 @@ class Serial:
 
     def run(self, body, timeout=40):
         self.write_script("set -e\n" + body, "/run/zack-test.sh")
-        self.send("bash /run/zack-test.sh >/run/zack-test.out 2>&1; code=$?; "
-                  "printf '\\nZS%s\\n' \"$code\"; base64 -w0 /run/zack-test.out; printf '\\nZE\\n'")
+        # The serial console also carries service logs during startup. Frame
+        # the entire reply together and reread the saved output if interrupted.
+        reply = "printf '\\nZS%s:%s:ZE\\n' \"$code\" \"$(base64 -w0 /run/zack-test.out)\""
+        self.send("bash /run/zack-test.sh >/run/zack-test.out 2>&1; code=$?; " + reply)
         response = self.until(self.prompt, timeout)
-        result = re.search(r"(?m)^ZS(\d+)\n([A-Za-z0-9+/=]*)\nZE", response)
+        pattern = r"(?m)^ZS(\d+):([A-Za-z0-9+/=]*):ZE$"
+        result = re.search(pattern, response)
+        if not result:
+            self.send(reply)
+            response = self.until(self.prompt, 20)
+            result = re.search(pattern, response)
         if not result:
             raise RuntimeError("Incomplete serial command response: " + response[-700:])
         out = base64.b64decode(result[2]).decode(errors="replace").strip()
@@ -142,7 +149,7 @@ class Qemu:
             self.vars = work / "OVMF_VARS.fd"
             shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", self.vars)
 
-    def boot(self, iso=None):
+    def boot(self, iso=None, *, boot_from_disk=False):
         opt = self.options
         self.serial.unlink(missing_ok=True)
         self.monitor.unlink(missing_ok=True)
@@ -158,8 +165,8 @@ class Qemu:
             args += ["-drive", "if=pflash,unit=0,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
                      "-drive", f"if=pflash,unit=1,format=raw,file={self.vars}"]
         if iso:
-            args += ["-cdrom", str(iso), "-boot", "once=d"]
-        print("Starting QEMU", "live ISO" if iso else "installed disk", flush=True)
+            args += ["-cdrom", str(iso), "-boot", "order=c" if boot_from_disk else "once=d"]
+        print("Starting QEMU", "live ISO" if iso and not boot_from_disk else "installed disk", flush=True)
         self.proc = subprocess.Popen(args, stdout=self.log, stderr=self.log)
         for _ in range(100):
             if self.proc.poll() is not None:
@@ -277,6 +284,43 @@ def install_as_live(live, desktop, init, root_pass, user_pass):
     print(live.run("echo " + shlex.quote(options) + " | su -s /bin/sh -c '/usr/bin/python3 /tmp/zack-test-install.py' live", 950), flush=True)
 
 
+def password_check(disk, command, password, *, success=True):
+    # Run the command as a child of the user's terminal shell, as in Kitty.
+    # Shadow su -c releases its controlling tty after authentication. If the
+    # shell execs su as session leader, this hangs up the terminal as well.
+    tty_command = command + '; result=$?; exit "$result"'
+    user_command = "test \"$(id -u)\" -ne 0 && exec script -qe -c " + shlex.quote(tty_command) + " /dev/null"
+    disk.send("su -s /bin/sh -c " + shlex.quote(user_command) + " tester; printf '\\nZAUTH=%s\\n' \"$?\"")
+    prompt, _ = disk.expect((b"assword:", disk.prompt), 20)
+    if prompt == disk.prompt:
+        raise RuntimeError("The command did not ask the regular user to authenticate")
+    disk.send(password)
+    result = disk.until(disk.prompt, 25)
+    if success:
+        if not re.search(r"(?m)^0\s*\n+ZAUTH=0$", result):
+            detail = result.replace(password, "[redacted]")[-400:]
+            raise RuntimeError(f"Authenticated command did not report root UID 0: {detail!r}")
+    elif "Authentication failure" not in result or not re.search(r"(?m)^ZAUTH=[1-9]\d*$", result):
+        raise RuntimeError("Unexpected result from the original release's su")
+
+
+def check_system_tools(disk, root_pass, user_pass, *, online=False):
+    disk.run("test \"$(stat -c '%u:%g:%a' /usr/bin/su)\" = 0:0:4755; "
+             "test \"$(stat -c '%u:%g:%a' /usr/bin/passwd)\" = 0:0:4755; "
+             "test \"$(stat -c '%u:%g:%a' /usr/bin/sudo)\" = 0:0:4755; "
+             "test \"$(stat -c '%u:%g:%a' /etc/shadow)\" = 0:0:600; visudo -c; "
+             "id -nG tester | tr ' ' '\\n' | grep -qx wheel; "
+             "if su -s /bin/sh -c 'sudo -kn /usr/bin/id -u' tester; then exit 1; fi; "
+             "if sudo -l -U nobody /usr/bin/id -u >/dev/null 2>&1; then exit 1; fi")
+    password_check(disk, "su - root -c '/usr/bin/id -u'", root_pass)
+    password_check(disk, "sudo -k -p 'Password:' /usr/bin/id -u", user_pass)
+    disk.write_script((HERE / "tests/download-tools.py").read_text(), "/tmp/zack-download-tools.py")
+    disk.run("chmod 644 /tmp/zack-download-tools.py")
+    command = "/usr/bin/python3 /tmp/zack-download-tools.py" + (" --https" if online else "")
+    print(disk.run("su -s /bin/sh -c " + shlex.quote(command) + " tester", 100), flush=True)
+    print("Verified separate su and sudo passwords from the regular account.", flush=True)
+
+
 def check_vm(vm, opt):
     root_pass, user_pass = secrets.token_hex(12), secrets.token_hex(10)
     start = time.monotonic()
@@ -312,6 +356,7 @@ def check_vm(vm, opt):
         if grab:
             grab.join(5)
     disk.run(firmware)
+    check_system_tools(disk, root_pass, user_pass)
     digest = disk.run("sha256sum /boot/vmlinuz-* | cut -d' ' -f1")
     assert digest == kernel, (digest, kernel)
     print("Matching live and installed kernel SHA-256", digest, flush=True)

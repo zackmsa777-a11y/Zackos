@@ -860,22 +860,7 @@ def install_init(choice, part=None, bundled=False):
 
     # Resolve the booted partition through sysfs before udev creates /dev/disk links.
     # The installer and the installed disk can use different virtual storage controllers.
-    with open(os.path.join(etc_runit, "1"), "w") as f:
-        f.write(
-            "#!/bin/sh\n"
-            "mount -t proc proc /proc 2>/dev/null || true\n"
-            "mount -t sysfs sysfs /sys 2>/dev/null || true\n"
-            "mount -t devtmpfs devtmpfs /dev 2>/dev/null || true\n"
-            "devnum=$(awk '$5 == \"/\" { print $3; exit }' /proc/self/mountinfo)\n"
-            "rootdev=$(readlink -f /sys/dev/block/\"$devnum\") || exit 1\n"
-            "mount -o remount,rw /dev/\"${rootdev##*/}\" / || exit 1\n"
-            "mkdir -p /dev/pts /dev/shm\n"
-            "mount -t devpts devpts /dev/pts 2>/dev/null || true\n"
-            "mount -t tmpfs tmpfs /run 2>/dev/null || true\n"
-            "mount -a 2>/dev/null || true\n"
-            "hostname -F /etc/hostname 2>/dev/null || true\n"
-            "exit 0\n"
-        )
+    shutil.copyfile(Path(__file__).with_name("boot") / "runit-stage1", Path(etc_runit) / "1")
     # Stage 2 must use the absolute provider path; PID1 has no reliable PATH.
     # runsvdir itself launches "runsv" (and runsv launches per-service "run"
     # scripts) via a PATH-based execvp, not an absolute path - confirmed

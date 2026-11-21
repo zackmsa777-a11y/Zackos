@@ -248,7 +248,7 @@ class Wizard(Gtk.ApplicationWindow):
 
     def account(self):
         box = column(15)
-        box.add(self.heading("Create your account", "Choose a desktop login and an administrator password."))
+        box.add(self.heading("Create your account", "Use your login password for sudo and the root password for su."))
         grid = Gtk.Grid(column_spacing=14, row_spacing=11)
         for index, (key, title, default, secret) in enumerate((
             ("username", "Username", "zack", False), ("hostname", "Computer name", "zackos", False),

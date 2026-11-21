@@ -27,7 +27,7 @@ jobs:
       - name: Install image tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends grub-common grub-pc-bin grub-efi-amd64-bin mtools xorriso squashfs-tools cpio libdrm-dev libpng-dev zlib1g-dev bc bison flex libssl-dev libelf-dev kmod
+          sudo apt-get install -y --no-install-recommends grub-common grub-pc-bin grub-efi-amd64-bin mtools xorriso squashfs-tools cpio libdrm-dev libpng-dev zlib1g-dev bc bison flex libssl-dev libelf-dev kmod libcrypt-dev libpsl-dev libidn2-dev libunistring-dev libnghttp2-dev pkg-config
       - name: Fetch the verified v5.8 base
         working-directory: ${{ runner.temp }}
         run: |
@@ -47,15 +47,23 @@ jobs:
           fi
       - name: Build BIOS and UEFI media
         run: |
-          sudo --preserve-env=ZACKOS_KERNEL_BUNDLE patches/zackos-installer/remaster-iso.sh "$RUNNER_TEMP/v58.iso" "$RUNNER_TEMP/ZackOS-i3.iso"
+          sudo --preserve-env=ZACKOS_KERNEL_BUNDLE env ZACKOS_TOOLS_ISO="$RUNNER_TEMP/ZackOS-system-tools.iso" patches/zackos-installer/remaster-iso.sh "$RUNNER_TEMP/v58.iso" "$RUNNER_TEMP/ZackOS-i3.iso"
       - name: Split the boot-tested distribution format
         working-directory: ${{ runner.temp }}
         run: |
           mkdir media
           split -b 1024M -d -a 2 ZackOS-i3.iso media/ZackOS-i3.iso.part
           sha256sum ZackOS-i3.iso > media/ZackOS-i3.iso.sha256
+          mv ZackOS-system-tools.iso media/
           cd media
+          sha256sum ZackOS-system-tools.iso > ZackOS-system-tools.iso.sha256
           sha256sum ZackOS-i3.iso.part* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zackos-system-tools
+          path: ${{ runner.temp }}/media/ZackOS-system-tools.iso*
+          compression-level: 0
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: zackos-iso-parts

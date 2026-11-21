@@ -2,6 +2,7 @@
 # Supply offline FAT formatting, ACPI events and the UEFI fallback loader.
 set -euo pipefail
 dest=$(realpath "${1:?provide the extracted base root}")
+src=$(cd "$(dirname "$0")/.." && pwd)
 # LFS OpenSSL reads cert.pem; Nix and curl already use the packaged trust bundle.
 certs="$dest/etc/ssl/certs/ca-certificates.crt"
 if [[ ! -s $certs ]]; then
@@ -32,3 +33,4 @@ mkdir -p "$efi"
 # root UUID in BOOTX64.EFI, even when firmware supplies no loader device path.
 cp -a /usr/lib/grub/x86_64-efi "$efi/"
 install -m644 /usr/share/grub/unicode.pf2 "$efi/unicode.pf2"
+"$src/system-tools/build.sh" "$dest" "${ZACKOS_TOOLS_ISO:-}"

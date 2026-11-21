@@ -13,7 +13,7 @@ cp "$src/power/zackos-power" "$dst/power/"
 # The live init overlays this payload onto an existing copy with BusyBox cp.
 # Materialize shared artwork so repeated boots can safely overwrite each file.
 cp -RL "$src/branding" "$src/desktop" "$dst/"
-cp "$src/boot/installed-init" "$src/boot/splash-done" "$dst/boot/"
+cp "$src/boot/installed-init" "$src/boot/splash-done" "$src/boot/runit-stage1" "$dst/boot/"
 "$src/boot/build-splash.sh" "$dst/boot/zack-splash"
 find "$dst" -type d -exec chmod 755 {} +
 find "$dst" -type f -exec chmod 644 {} +

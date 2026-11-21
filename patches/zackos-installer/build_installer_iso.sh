@@ -8,7 +8,7 @@ INSTALLER_SRC=$(cd "$(dirname "$0")" && pwd)
 echo "=== [1/9] apt/tooling ==="
 sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq procps qemu-system-x86 squashfs-tools squashfs-tools-ng xorriso grub-pc-bin grub-efi-amd64-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev
+apt-get install -y -qq procps qemu-system-x86 squashfs-tools squashfs-tools-ng xorriso grub-pc-bin grub-efi-amd64-bin grub-common mtools e2fsprogs cpio git curl bison flex bc libelf-dev libssl-dev gcc pkg-config libdrm-dev libpng-dev zlib1g-dev libcrypt-dev libpsl-dev libidn2-dev libunistring-dev libnghttp2-dev
 
 mkdir -p "$WORK"
 cd "$WORK"
@@ -121,7 +121,7 @@ if [ -z "$kernel" ]; then
 fi
 rm -rf rootfs/usr/lib/modules
 rm -f rootfs/boot/{vmlinuz-*,config-*,System.map-*}
-tar xzf "$kernel" -C rootfs
+tar --no-same-owner -xzf "$kernel" -C rootfs
 kernels=(rootfs/boot/vmlinuz-*)
 [[ ${#kernels[@]} == 1 && -s ${kernels[0]} ]] || exit 1
 cp "${kernels[0]}" iso_layout/boot/vmlinuz

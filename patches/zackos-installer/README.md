@@ -57,6 +57,31 @@ disk opens the ZackOS LightDM sign-in screen. Choose your account and enter
 your password to start i3. Logging out returns to the same screen.
 Plasma X11 and the console with runit require access to the Nix cache.
 
+### Download tools and administrator access
+
+The base system includes curl and GNU Wget for every desktop and the text console.
+The account created by the installer belongs to the wheel group. Use `sudo -v`
+with your **login password**, or `su -` with the **root password** you set in the
+installer. `passwd` changes your own password.
+
+For an existing v5.10 VirtualBox disk, download `ZackOS-system-tools.iso` and
+its SHA-256 file from the v5.11 release and attach the ISO to the virtual optical
+drive. Boot the installed disk. Press **Host+F1** (normally **Right Ctrl+F1**)
+and log in as `root` using the installed root password. Run these commands.
+
+```sh
+mkdir -p /mnt/zacktools
+mount -o ro /dev/sr0 /mnt/zacktools
+python3 /mnt/zacktools/install.py
+umount /mnt/zacktools
+exit
+```
+
+Press **Host+F7** to return to the desktop. Run `sudo -v`, then `sudo id -u`
+as your everyday account. A successful check prints `0`. The data disc updates
+the installed disk in place and preserves the accounts and any existing sudoers policy.
+It also enables localhost on the stock runit installation, immediately and on later boots.
+
 The live ISO uses SysVinit. New graphical installations default to runit.
 To use KDE, select **KDE Plasma X11** in the graphical installer, then sign
 in to LightDM with the account you created. Both init choices support Plasma.

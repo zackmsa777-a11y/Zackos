@@ -127,8 +127,38 @@ jobs:
           path: ${{ runner.temp }}/screens/*.png
           if-no-files-found: ignore
           retention-days: 7
+  upgrade:
+    name: Repair an installed v5.10 disk
+    needs: media
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils python3-pil
+      - uses: actions/download-artifact@v4
+        with:
+          name: zackos-system-tools
+          path: ${{ runner.temp }}/update
+          run-id: ${{ needs.media.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Verify the data disc on the previous public release
+        working-directory: ${{ runner.temp }}/update
+        run: |
+          sha256sum -c ZackOS-system-tools.iso.sha256
+          base=https://github.com/zackmsa777-a11y/Zackos/releases/download/v5.10-plasma-orbit
+          for n in 00 01 02; do
+            curl -fLsS --retry 3 "$base/ZackOS-i3.iso.part$n" -o "old.part$n"
+          done
+          cat old.part* > v510.iso
+          rm old.part*
+          echo 'd918815eabe80758fde91d52ce4371b8083bced95076bf4bd7a5dd350ef851f1  v510.iso' | sha256sum -c -
+          sudo /usr/bin/python3 -u "$GITHUB_WORKSPACE/patches/zackos-installer/test-tools-upgrade.py" v510.iso ZackOS-system-tools.iso
   stage:
-    needs: [media, guest]
+    needs: [media, guest, upgrade]
     runs-on: ubuntu-24.04
     permissions:
       actions: read
