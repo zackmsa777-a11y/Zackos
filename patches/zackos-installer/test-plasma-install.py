@@ -83,6 +83,7 @@ def check(vm, iso, init, out):
         pid1 = disk.run("readlink /proc/1/exe")
         assert Path(pid1).name == {"runit": "runit", "sysvinit": "init"}[init], pid1
         print("PID 1:", pid1, flush=True)
+        VM["check_system_tools"](disk, root_pass, user_pass)
         print(disk.run("cat /etc/zackos/profile.toml; grep -qx user-session=zackos-plasma /etc/lightdm/lightdm.conf; "
                        "getent passwd tester | grep -q ':/nix/var/nix/profiles/default/bin/zsh$'; "
                        "test -s /home/tester/.config/kitty/kitty.conf; test -s /home/tester/.config/fastfetch/config.jsonc"), flush=True)
