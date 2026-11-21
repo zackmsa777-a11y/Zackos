@@ -609,18 +609,24 @@ def install_plasma_x11():
     wait_for_network()
     export = (f"export PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH; "
               f"export HOME=/root; export NIX_PATH=nixpkgs={NIX_CHANNEL}; " )
-    packages = ["nixpkgs.xorg-server", "nixpkgs.xinit", "nixpkgs.xauth",
-        "nixpkgs.xf86-input-libinput", "nixpkgs.mesa", "nixpkgs.libglvnd", "nixpkgs.dbus",
-        "nixpkgs.dejavu_fonts", "nixpkgs.inter", "nixpkgs.rxvt-unicode", "nixpkgs.kitty", "nixpkgs.zsh", "nixpkgs.fastfetch",
-        "nixpkgs.lightdm", "nixpkgs.lightdm-gtk-greeter", "nixpkgs.linux-pam", "nixpkgs.adwaita-icon-theme",
-        "nixpkgs.kdePackages.plasma-integration", "nixpkgs.kdePackages.qqc2-desktop-style",
-        "nixpkgs.kdePackages.plasma-desktop", "nixpkgs.kdePackages.plasma-workspace",
-        "nixpkgs.kdePackages.kactivitymanagerd", "nixpkgs.kdePackages.kded", "nixpkgs.kdePackages.kservice",
-        "nixpkgs.kdePackages.kwin-x11", "nixpkgs.kdePackages.systemsettings",
-        "nixpkgs.kdePackages.dolphin", "nixpkgs.kdePackages.konsole",
-        "nixpkgs.kdePackages.breeze", "nixpkgs.kdePackages.breeze-icons", "nixpkgs.elogind"]
-    result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA " + " ".join(packages))
-    if result.returncode != 0: raise InstallError("Failed to install KDE Plasma X11 package set")
+    # A single evaluation of all these attributes can exhaust a 4 GiB live VM.
+    # Each nix-env invocation releases its evaluator before the next group starts.
+    groups = {
+        "X11": ("xorg-server", "xinit", "xauth", "xf86-input-libinput", "mesa", "libglvnd", "dbus", "elogind"),
+        "login and fonts": ("lightdm", "lightdm-gtk-greeter", "linux-pam", "adwaita-icon-theme", "dejavu_fonts", "inter"),
+        "Plasma workspace": ("kdePackages.plasma-desktop", "kdePackages.plasma-workspace", "kdePackages.kwin-x11",
+                             "kdePackages.kactivitymanagerd", "kdePackages.kded", "kdePackages.kservice"),
+        "Plasma appearance": ("kdePackages.breeze", "kdePackages.breeze-icons", "kdePackages.plasma-integration",
+                              "kdePackages.qqc2-desktop-style"),
+        "KDE applications": ("kdePackages.systemsettings", "kdePackages.dolphin", "kdePackages.konsole"),
+        "terminal tools": ("rxvt-unicode", "kitty", "zsh", "fastfetch"),
+    }
+    for group, names in groups.items():
+        log(f"Installing {group}")
+        attributes = " ".join("nixpkgs." + name for name in names)
+        result = chroot_run(export + "NIXPKGS_ALLOW_UNSUPPORTED_SYSTEM=1 nix-env -iA " + attributes)
+        if result.returncode:
+            raise InstallError(f"Failed to install {group} for KDE Plasma X11 (exit {result.returncode})")
     link_nix_bins(["startx", "Xorg", "xauth", "urxvt", "startplasma-x11", "kwin_x11", "plasmashell", "konsole", "dolphin"], require_all=True)
     register_nix_fonts()
     prepare_x11_session()

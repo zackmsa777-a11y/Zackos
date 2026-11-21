@@ -66,7 +66,7 @@ def check(vm, iso, init, out):
         VM["install_as_live"](live, "plasma-x11", init, root_pass, user_pass)
     except Exception:
         vm.screen(out / "installer-display.png")
-        print(live.run("free -m; df -h /mnt/zackos 2>/dev/null || :; "
+        print(live.run("free -m; df -h /mnt/target 2>/dev/null || :; "
                        "dmesg | grep -Ei 'out of memory|oom-kill|killed process|I/O error' | tail -16 || :"), flush=True)
         raise
     vm.acpi()
