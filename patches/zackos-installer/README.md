@@ -56,6 +56,17 @@ after success. **Stay in live session** cancels that restart. The installed
 disk opens the ZackOS LightDM sign-in screen. Choose your account and enter
 your password to start i3. Logging out returns to the same screen.
 Plasma X11 and the console with runit require access to the Nix cache.
+
+The live ISO uses SysVinit. New graphical installations default to runit.
+To use KDE, select **KDE Plasma X11** in the graphical installer, then sign
+in to LightDM with the account you created. Both init choices support Plasma.
+
+Plasma starts with **ZackOS Orbit**, the ringed-planet wallpaper, and a
+floating top panel. Click **Apps** to search applications. The bottom dock
+pins Dolphin, Konsole and System Settings and moves aside for windows.
+Konsole uses the matching Orbit terminal profile. You can change the global
+theme in **System Settings → Colors & Themes → Global Theme** and edit the
+panels in Plasma's Edit Mode.
 For a console-mode installation, `zackinstall --no-reboot` keeps the live session open.
 
 The **Start ZackOS** disk entry loads Linux and displays the logo with a

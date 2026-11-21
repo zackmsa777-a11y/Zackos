@@ -29,7 +29,7 @@ Boot-verified end to end: reaches a real login prompt, logs in, gives you a work
 ## Get it
 
 Download the i3 ISO parts and follow the joining and checksum instructions
-on the [v5.9 release page](https://github.com/zackmsa777-a11y/Zackos/releases/tag/v5.9-vm-compat).
+on the [release page](https://github.com/zackmsa777-a11y/Zackos/releases/latest).
 For QEMU or VirtualBox, start with two virtual CPUs, 4 GiB RAM and a 24 GiB disk.
 Use VirtIO graphics in QEMU or VMSVGA with 64 MiB video memory in VirtualBox.
 The x86-64 ISO and installer support BIOS and UEFI with Secure Boot off.
@@ -95,6 +95,7 @@ Booted this exact build to a full login prompt, logged in as root, ran `uname -a
 
 | Tag | What it is |
 |---|---|
+| `v5.10-plasma-orbit` | ZackOS Orbit for KDE Plasma X11, a floating panel and dock, themed Konsole, and LightDM sign-in |
 | `v5.9-vm-compat` | BIOS and UEFI installation, QEMU and VirtualBox graphics, desktop and ACPI power controls |
 | `v5.8-i3-live-installer` | Live i3 desktop, offline graphical installer, and ZackOS LightDM sign-in |
 | `v3.0-live-squashfs-iso` | Self-contained live-boot ISO with SquashFS and OverlayFS |
