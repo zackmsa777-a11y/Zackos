@@ -46,6 +46,9 @@ For VirtualBox, select Linux (64-bit), use a SATA disk, VMSVGA graphics,
 installation or keep BIOS selected. Setup uses a GPT disk with a 260 MiB
 EFI System Partition when booted with UEFI and an MBR disk when booted with BIOS.
 Keep the VM in the firmware mode you installed with. The EFI loader is unsigned.
+On QEMU's legacy VMware SVGA II adapter, GRUB selects the firmware framebuffer.
+This adapter lacks the pitch-lock feature required by Linux vmwgfx. VirtualBox
+VMSVGA uses the native driver.
 
 The graphical default installs glibc, Nix, runit, GRUB and i3. With automatic
 restart enabled on the review screen, setup displays a 20-second countdown
