@@ -135,10 +135,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("iso", type=Path)
     parser.add_argument("init", choices=("runit", "sysvinit"))
+    parser.add_argument("--memory-mib", type=int, default=4096)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    options = SimpleNamespace(video="virtio", firmware="bios", accel="kvm", move_to_sata=False, memory=4096)
+    options = SimpleNamespace(video="virtio", firmware="bios", accel="kvm", move_to_sata=False, memory=args.memory_mib)
     with tempfile.TemporaryDirectory(prefix="zackos-plasma-") as directory:
         vm = VM["Qemu"](Path(directory), options)
         try:
