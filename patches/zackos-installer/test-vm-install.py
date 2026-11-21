@@ -278,9 +278,11 @@ def install_as_live(live, desktop, init, root_pass, user_pass):
 
 
 def password_check(disk, command, password, *, success=True):
-    # su -c detaches the caller's controlling tty. Allocate one owned by the
-    # desktop user, as Kitty does, so the password reader can open /dev/tty.
-    user_command = "test \"$(id -u)\" -ne 0 && exec script -qe -c " + shlex.quote(command) + " /dev/null"
+    # Run the command as a child of the user's terminal shell, as in Kitty.
+    # Shadow su -c releases its controlling tty after authentication. If the
+    # shell execs su as session leader, this hangs up the terminal as well.
+    tty_command = command + '; result=$?; exit "$result"'
+    user_command = "test \"$(id -u)\" -ne 0 && exec script -qe -c " + shlex.quote(tty_command) + " /dev/null"
     disk.send("su -s /bin/sh -c " + shlex.quote(user_command) + " tester; printf '\\nZAUTH=%s\\n' \"$?\"")
     prompt, _ = disk.expect((b"assword:", disk.prompt), 20)
     if prompt == disk.prompt:
@@ -289,7 +291,8 @@ def password_check(disk, command, password, *, success=True):
     result = disk.until(disk.prompt, 25)
     if success:
         if not re.search(r"(?m)^0\s*\n+ZAUTH=0$", result):
-            raise RuntimeError("Authenticated command did not report root UID 0")
+            detail = result.replace(password, "[redacted]")[-400:]
+            raise RuntimeError(f"Authenticated command did not report root UID 0: {detail!r}")
     elif "Authentication failure" not in result or not re.search(r"(?m)^ZAUTH=[1-9]\d*$", result):
         raise RuntimeError("Unexpected result from the original release's su")
 
