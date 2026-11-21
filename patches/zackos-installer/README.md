@@ -37,7 +37,18 @@ working GRUB menu and successful `switch_root`/kernel boot.
 
 With QEMU installed, run `./qemu-i3.sh zackos.qcow2 ZackOS-i3.iso`
 from this directory. It creates a 24 GiB disk if needed. The VM uses x86-64
-BIOS, two vCPUs, 4 GiB RAM and VirtIO graphics.
+BIOS, two vCPUs, 4 GiB RAM and VirtIO graphics. The launcher uses KVM when available and falls back to TCG.
+On a Linux graphical host with working OpenGL and QEMU's GTK and VirGL support,
+`ZACKOS_QEMU_3D=1 ./qemu-i3.sh zackos.qcow2` enables 3D on the VirtIO adapter.
+
+For VirtualBox, select Linux (64-bit), use a SATA disk, VMSVGA graphics,
+64 MiB video memory and leave 3D acceleration off. Either enable EFI before
+installation or keep BIOS selected. Setup uses a GPT disk with a 260 MiB
+EFI System Partition when booted with UEFI and an MBR disk when booted with BIOS.
+Keep the VM in the firmware mode you installed with. The EFI loader is unsigned.
+On QEMU's legacy VMware SVGA II adapter, GRUB selects the firmware framebuffer.
+This adapter lacks the pitch-lock feature required by Linux vmwgfx. VirtualBox
+VMSVGA uses the native driver.
 
 The graphical default installs glibc, Nix, runit, GRUB and i3. With automatic
 restart enabled on the review screen, setup displays a 20-second countdown
@@ -73,20 +84,22 @@ Edit `~/.config/kitty/kitty.conf`, `~/.zshrc`, or
 | Super + F2 | Open Thunar |
 | Super + 1–5 | Switch workspace |
 
-To boot the disk later, run `./qemu-i3.sh zackos.qcow2`. From the serial
-console, `setsid -f /sbin/poweroff </dev/null >/dev/null 2>&1` lets
-shutdown finish while runit stops the getty.
+To boot the disk later, run `./qemu-i3.sh zackos.qcow2`. The i3 power menu or
+`zackos-power poweroff` and `zackos-power reboot` work for the installed
+desktop user. The hypervisor’s ACPI power button requests a clean shutdown.
+On runit, root can schedule with `shutdown -r +10`, inspect with
+`zackos-power status`, and cancel with `shutdown -c`.
 
 ## Build the graphical ISO
 
-Use an x86-64 Linux build machine with Nix, the intended nixpkgs channel and
-`tar2sqfs` from squashfs-tools-ng. The following commands create a compressed
-desktop package set, then add it and the graphical installer to the verified
-v5.7 BIOS ISO.
+On x86-64 Linux, rebuild from the verified v5.8 desktop ISO with
+`sudo ./remaster-iso.sh v5.8.iso ZackOS-i3.iso`. This reuses the offline
+desktop and builds a single kernel for both the live ISO and the install.
+To refresh the desktop package set, use Nix and `tar2sqfs` from squashfs-tools-ng.
 
 ```sh
 ./live/build-desktop.sh desktop.img
-./remaster-iso.sh v5.7.iso ZackOS-i3.iso desktop.img
+sudo ./remaster-iso.sh v5.8.iso ZackOS-i3.iso desktop.img
 ```
 
 For a release built from an existing stock ZackOS i3 installation, pass
@@ -94,11 +107,12 @@ For a release built from an existing stock ZackOS i3 installation, pass
 The exporter reads the immutable Nix dependency closure and its registration
 records. To build on two machines, pipe `live/export-desktop.sh` from the
 Nix machine into `tar2sqfs -q -s -c gzip desktop.img` on the packaging host.
-With two arguments, `remaster-iso.sh` builds the desktop image automatically.
+For a v5.7 base, the remaster script builds a fresh desktop image when none is supplied.
 Pass `--console-only` as its third argument to produce the small text installer.
 
-Remastering requires xorriso, cpio, gzip, an x86-64 C compiler, pkg-config,
-and static libdrm, libpng and zlib development libraries. For a full
+Install xorriso, cpio, gzip, squashfs-tools, mtools, GRUB BIOS and x86-64 EFI
+platform tools, a kernel build toolchain, pkg-config and the static libdrm,
+libpng and zlib development libraries. The VM installer workflow lists the Ubuntu packages. For a full
 kernel/base rebuild, set `ZACKOS_DESKTOP_IMAGE` to the absolute desktop image
 path when running `build_installer_iso.sh`.
 

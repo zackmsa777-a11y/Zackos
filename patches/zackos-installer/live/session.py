@@ -31,6 +31,9 @@ def main():
         user = pwd.getpwnam("live")
     if user.pw_uid < 1000 or user.pw_uid == 65534:
         raise SystemExit("Invalid live account")
+    core.configure_power("sysvinit", "live", live=True)
+    subprocess.run(["udevadm", "control", "--reload"], check=False)
+    subprocess.run(["udevadm", "trigger", "--subsystem-match=drm"], check=False)
     # Write user-owned configuration with that user's permissions on persistent media.
     config = Path(user.pw_dir, ".config/i3/config")
     settings = (PAYLOAD / "desktop/i3.conf").read_text() + (

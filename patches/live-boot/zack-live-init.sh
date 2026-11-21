@@ -142,7 +142,7 @@ if [ -d /mnt/desktop/nix/store ]; then
     mount --bind /mnt/desktop /newroot/mnt/zackos-desktop || exec /bin/sh
 fi
 # Replace our own entries when booting the same persistence volume again.
-sed -i '/^zl[pxb]:/d' /newroot/etc/inittab
+sed -i -e '/^zl[pxb]:/d' -e '/^z[pa]:/d' /newroot/etc/inittab
 case " $(cat /proc/cmdline) " in
     *" zackos.desktop=1 "*)
         if [ -f /newroot/usr/local/share/zackos-media/profile ]; then
@@ -150,6 +150,8 @@ case " $(cat /proc/cmdline) " in
 zlp:2345:wait:/usr/bin/python3 /usr/local/lib/zackos-installer/live/session.py
 zlb:2345:respawn:/usr/bin/python3 /usr/local/lib/zackos-installer/live/backend.py
 zlx:2345:respawn:/usr/local/lib/zackos-installer/desktop/zackos-display --live
+zp:2345:respawn:/usr/local/bin/zackos-power --serve sysvinit
+za:2345:respawn:/usr/sbin/acpid -f
 SERVICES
         fi ;;
 esac

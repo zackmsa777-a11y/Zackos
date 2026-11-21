@@ -23,6 +23,11 @@ run_step () {
 }
 
 run_step "fstab"  /scripts_chroot/fstab.sh
+config=config-6.16.1-lfs-12.4-bochs-drm.config
+source_config="$(cd "$(dirname "$0")/.." && pwd)/patches/kernel-configs/$config"
+if [[ ! "$source_config" -ef "$LFS/patches/kernel-configs/$config" ]]; then
+  install -Dm644 "$source_config" "$LFS/patches/kernel-configs/$config" || exit 1
+fi
 run_step "kernel" /scripts_chroot/kernel.sh
 
 echo "[$(date +%T)] === CHAPTER 10 COMPLETE ===" | tee -a "$LOG"
