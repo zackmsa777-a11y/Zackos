@@ -265,6 +265,11 @@ def capture_boot(vm, path, done):
         done.wait(.2)
 
 
+def check_console_terminals(disk):
+    print(disk.run("test \"$(ps -p $$ -o tty= | xargs)\" = ttyS0; "
+                   "ps -C agetty -o tty=,args= | grep -E '^[[:space:]]*tty1[[:space:]].*agetty .*tty1'"))
+
+
 def check_vm(vm, opt):
     root_pass, user_pass = secrets.token_hex(12), secrets.token_hex(10)
     start = time.monotonic()
@@ -327,23 +332,24 @@ def check_vm(vm, opt):
     vm.screen(opt.output / "kitty.png")
     print("Signed in to i3, opened the launcher and Kitty.", flush=True)
     if opt.init == "runit":
-        # Both gettys must keep their own controlling terminal while LightDM runs.
-        print(disk.run("test \"$(ps -p $$ -o tty= | xargs)\" = ttyS0; "
-                       "ps -C agetty -o tty=,args= | grep -E '^[[:space:]]*tty1[[:space:]].*agetty .*tty1'"))
+        check_console_terminals(disk)
         print(disk.run("shutdown -c; shutdown -r +5; zackos-power status | grep reboot; "
                        "shutdown -c; zackos-power status | grep none; "
                        "if shutdown -x; then exit 1; fi; if su -s /bin/sh -c '/sbin/shutdown -h +1' tester; then exit 1; fi"))
     disk.run("if su -s /bin/sh -c '/usr/local/bin/zackos-power poweroff' nobody; then exit 1; fi; "
              "su -s /bin/sh -c '/usr/local/bin/zackos-power status' tester")
-    boot_id = disk.run("cat /proc/sys/kernel/random/boot_id")
-    disk.send("su -s /bin/sh -c '/usr/local/bin/zackos-power reboot' tester")
-    # Ignore getty output from the old system while init stops its services.
-    # Both hypervisors retain the same serial connection across a reset.
-    disk.expect((b"GNU GRUB", b"Start ZackOS", b"Linux version 6.",
-                 b"enter stage: /etc/runit/1", b"INIT: version"), 180)
-    disk.login(root_pass, DISK_AUTH)
-    assert disk.run("cat /proc/sys/kernel/random/boot_id") != boot_id, "The VM did not restart"
-    disk.wait("test -S /run/zackos-power/control && pgrep -x acpid")
+    reboots = 2 if opt.platform == "virtualbox" and opt.firmware == "uefi" else 1
+    for _ in range(reboots):
+        boot_id = disk.run("cat /proc/sys/kernel/random/boot_id")
+        disk.send("su -s /bin/sh -c '/usr/local/bin/zackos-power reboot' tester")
+        # Ignore getty output from the old system while init stops its services.
+        disk.expect((b"GNU GRUB", b"Start ZackOS", b"Linux version 6.",
+                     b"enter stage: /etc/runit/1", b"INIT: version"), 180)
+        disk.login(root_pass, DISK_AUTH)
+        assert disk.run("cat /proc/sys/kernel/random/boot_id") != boot_id, "The VM did not restart"
+        disk.wait("test -S /run/zackos-power/control && pgrep -x acpid")
+        if opt.init == "runit":
+            check_console_terminals(disk)
     if opt.shutdown == "acpi":
         vm.acpi()
     else:
