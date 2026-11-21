@@ -1052,7 +1052,7 @@ def check_package_cache():
             if b"StoreDir: /nix/store" not in response.read(4096):
                 raise ValueError("unexpected response from the package cache")
     except (OSError, ValueError) as exc:
-        raise InstallError("Cannot reach the Nix package cache over HTTPS") from exc
+        raise InstallError(f"Cannot reach the Nix package cache over HTTPS ({exc})") from exc
 
 
 def full_install(disk, wm_choice=None, init_choice=None, hostname="zackos",

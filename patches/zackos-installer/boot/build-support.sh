@@ -2,6 +2,17 @@
 # Supply offline FAT formatting, ACPI events and the UEFI fallback loader.
 set -euo pipefail
 dest=$(realpath "${1:?provide the extracted base root}")
+# LFS OpenSSL reads cert.pem; Nix and curl already use the packaged trust bundle.
+certs="$dest/etc/ssl/certs/ca-certificates.crt"
+if [[ ! -s $certs ]]; then
+    shopt -s nullglob
+    bundles=("$dest"/nix/store/*-nss-cacert-*/etc/ssl/certs/ca-bundle.crt)
+    (( ${#bundles[@]} )) || { echo "Missing the base system CA trust bundle" >&2; exit 1; }
+    install -Dm644 "${bundles[-1]}" "$certs"
+fi
+if [[ ! -e $dest/etc/ssl/cert.pem ]]; then
+    ln -sfn certs/ca-certificates.crt "$dest/etc/ssl/cert.pem"
+fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
