@@ -52,9 +52,9 @@ done
 )
 install -m755 curl-8.23.0/src/curl wget-1.25.0/src/wget "$work/sudo-install/usr/bin/sudo" "$files/bin/"
 install -m755 "$work/sudo-install/usr/sbin/visudo" "$files/sbin/"
-for plugin in "$work/sudo-install/usr/libexec/sudo/"{*.so,sesh}; do
-    install -m755 "$plugin" "$files/libexec/sudo/"
-done
+plugins="$work/sudo-install/usr/libexec/sudo"
+install -m644 "$plugins"/*.so "$files/libexec/sudo/"
+if [[ -f $plugins/sesh ]]; then install -m755 "$plugins/sesh" "$files/libexec/sudo/"; fi
 strip "$files"/bin/{curl,wget,sudo} "$files/sbin/visudo" "$files"/libexec/sudo/*
 # Use the original trusted Shadow executables from the checksum-verified base.
 install -m755 "$root/usr/bin/su" "$root/usr/bin/passwd" "$files/bin/"

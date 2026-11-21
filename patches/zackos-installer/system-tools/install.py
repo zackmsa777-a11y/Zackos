@@ -70,7 +70,9 @@ def install(root, media):
     payload = media / "files"
     for name in ("usr/libexec/sudo", "usr/share/zackos-tools", "etc/sudoers.d"):
         dest = root / name
-        dest.mkdir(mode=0o755, exist_ok=True)
+        if not dest.exists():
+            dest.mkdir()
+            dest.chmod(0o755)
         trusted_dir(dest)
     for source in sorted((payload / "usr/libexec/sudo").iterdir()):
         replace_file(source, root / "usr/libexec/sudo" / source.name, 0o755 if source.name == "sesh" else 0o644)
@@ -87,7 +89,7 @@ def install(root, media):
     for name in ("curl", "wget", "sudo"):
         subprocess.run(["/usr/sbin/chroot", str(root), f"/usr/bin/{name}", "--version"],
                        stdout=subprocess.DEVNULL, check=True)
-    print("Installed curl, wget and sudo, and restored su and passwd. Your account passwords are unchanged.")
+    print("Installed curl, wget and sudo, and restored su and passwd. Check sudo -v from your desktop account.")
 
 
 if __name__ == "__main__":

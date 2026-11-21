@@ -95,6 +95,7 @@ Booted this exact build to a full login prompt, logged in as root, ran `uname -a
 
 | Tag | What it is |
 |---|---|
+| `v5.11-system-tools` | curl, GNU Wget, password-authenticated sudo, and a repair disc for existing v5.10 installations |
 | `v5.10-plasma-orbit` | ZackOS Orbit for KDE Plasma X11, a floating panel and dock, themed Konsole, and LightDM sign-in |
 | `v5.9-vm-compat` | BIOS and UEFI installation, QEMU and VirtualBox graphics, desktop and ACPI power controls |
 | `v5.8-i3-live-installer` | Live i3 desktop, offline graphical installer, and ZackOS LightDM sign-in |
