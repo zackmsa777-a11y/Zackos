@@ -1,0 +1,151 @@
+name: Install ZackOS on QEMU and VirtualBox
+on:
+  workflow_dispatch:
+    inputs:
+      image_run:
+        description: Successful VM installer build run ID (optional)
+        required: false
+  push:
+    branches: [qa/vm-compat]
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: vm-install-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find the build for this installer source
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECTED: ${{ inputs.image_run }}
+        run: |
+          commit=$(git log -1 --format=%H -- .github/workflows/vm-image.yml patches/kernel-configs patches/live-boot patches/zackos-installer ':!patches/zackos-installer/*.md' ':!patches/zackos-installer/test*.py' ':!patches/zackos-installer/tests/**')
+          if [[ -n $SELECTED ]]; then
+            [[ $SELECTED =~ ^[0-9]+$ ]]
+            run=$SELECTED
+          else
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$commit" --jq '[.workflow_runs[] | select(.path == ".github/workflows/vm-image.yml")][0].id')
+          fi
+          [[ $run =~ ^[0-9]+$ ]]
+          echo "Checking installer build $run"
+          gh run watch "$run" --exit-status --interval 30 > /dev/null
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+  guest:
+    needs: media
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: qemu, video: virtio, firmware: bios, init: runit, accel: kvm, shutdown: user}
+          - {platform: qemu, video: std, firmware: uefi, init: runit, accel: kvm, shutdown: acpi}
+          - {platform: qemu, video: vmware, firmware: bios, init: sysvinit, accel: kvm, shutdown: user}
+          - {platform: qemu, video: virtio, firmware: bios, init: runit, accel: tcg, shutdown: acpi}
+          - {platform: virtualbox, video: vmsvga, firmware: bios, init: runit, accel: native, shutdown: user}
+          - {platform: virtualbox, video: vboxsvga, firmware: uefi, init: runit, accel: native, shutdown: acpi}
+    name: ${{ matrix.platform }} ${{ matrix.video }} ${{ matrix.firmware }} ${{ matrix.accel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up hypervisor
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ACCEL: ${{ matrix.accel }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-pil
+          if [[ $PLATFORM == qemu ]]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf
+            if [[ $ACCEL == kvm ]]; then sudo setfacl -m "u:$USER:rw" /dev/kvm; fi
+            qemu-system-x86_64 --version
+          else
+            pkg="$RUNNER_TEMP/virtualbox.deb"
+            curl -fLsS --retry 3 -o "$pkg" 'https://download.virtualbox.org/virtualbox/debian/pool/contrib/v/virtualbox-7.2/virtualbox-7.2_7.2.22-175245~Ubuntu~noble_amd64.deb'
+            echo "426f192dc4515cd02a687a39408c0b6b0d7741de77ff7c345efd92e6090c96ee  $pkg" | sha256sum -c -
+            sudo apt-get install -y --no-install-recommends "linux-headers-$(uname -r)" build-essential "$pkg"
+            sudo modprobe -r kvm_intel 2>/dev/null || true
+            sudo modprobe -r kvm_amd 2>/dev/null || true
+            if ! sudo modprobe vboxdrv; then sudo /sbin/vboxconfig; sudo modprobe vboxdrv; fi
+            VBoxManage --version
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: zackos-iso-parts
+          path: ${{ runner.temp }}/iso
+          run-id: ${{ needs.media.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Verify, boot, install and cold boot the disk
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VIDEO: ${{ matrix.video }}
+          FIRMWARE: ${{ matrix.firmware }}
+          INIT: ${{ matrix.init }}
+          ACCEL: ${{ matrix.accel }}
+          SHUTDOWN: ${{ matrix.shutdown }}
+        run: |
+          cd "$RUNNER_TEMP/iso"
+          sha256sum -c SHA256SUMS
+          cat ZackOS-i3.iso.part* > ZackOS-i3.iso
+          sha256sum -c ZackOS-i3.iso.sha256
+          rm ZackOS-i3.iso.part*
+          args=("$GITHUB_WORKSPACE/patches/zackos-installer/test-vm-install.py" ZackOS-i3.iso "$PLATFORM" "$VIDEO" "$FIRMWARE" --init "$INIT" --shutdown "$SHUTDOWN" --output "$RUNNER_TEMP/screens")
+          if [[ $PLATFORM == virtualbox ]]; then sudo /usr/bin/python3 -u "${args[@]}"; else /usr/bin/python3 -u "${args[@]}" --accel "$ACCEL"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screen-${{ matrix.platform }}-${{ matrix.video }}-${{ matrix.firmware }}-${{ matrix.accel }}
+          path: ${{ runner.temp }}/screens/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+  stage:
+    needs: [media, guest]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Look for a draft targeting this exact test commit
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases" | jq -r --arg sha "$GITHUB_SHA" '[.[]|select(.draft and .target_commitish == $sha)][0].tag_name // empty')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        if: steps.draft.outputs.tag != ''
+        with:
+          name: zackos-iso-parts
+          path: media
+          run-id: ${{ needs.media.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        if: steps.draft.outputs.tag != ''
+        with:
+          pattern: screen-*
+          path: screens
+      - name: Attach verified media and guest screenshots to the draft
+        if: steps.draft.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.draft.outputs.tag }}
+        run: |
+          cp screens/screen-virtualbox-vmsvga-bios-native/live-installer.png media/virtualbox-live-installer.png
+          qemu=screens/screen-qemu-virtio-bios-kvm
+          cp "$qemu/login.png" media/qemu-login.png
+          cp "$qemu/launcher.png" media/qemu-app-launcher.png
+          cp "$qemu/kitty.png" media/kitty.png
+          if [[ -f "$qemu/boot-splash.png" ]]; then cp "$qemu/boot-splash.png" media/boot-splash.png; fi
+          gh release upload "$TAG" media/* --clobber --repo "$GITHUB_REPOSITORY"
