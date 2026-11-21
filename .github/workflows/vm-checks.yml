@@ -38,6 +38,11 @@ jobs:
             run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$commit" --jq '[.workflow_runs[] | select(.path == ".github/workflows/vm-image.yml")][0].id')
           fi
           [[ $run =~ ^[0-9]+$ ]]
+          build=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")
+          [[ $(jq -r .path <<< "$build") == .github/workflows/vm-image.yml ]]
+          source=$(jq -r .head_sha <<< "$build")
+          source_input=$(git log -1 --format=%H "$source" -- .github/workflows/vm-image.yml patches/kernel-configs patches/live-boot patches/zackos-installer ':!patches/zackos-installer/*.md' ':!patches/zackos-installer/test*.py' ':!patches/zackos-installer/tests/**')
+          [[ $source_input == "$commit" ]]
           echo "Checking installer build $run"
           gh run watch "$run" --exit-status --interval 30 > /dev/null
           echo "run=$run" >> "$GITHUB_OUTPUT"
@@ -69,7 +74,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends python3-pil
           if [[ $PLATFORM == qemu ]]; then
             sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf
-            if [[ $ACCEL == kvm ]]; then sudo setfacl -m "u:$USER:rw" /dev/kvm; fi
+            if [[ $ACCEL == kvm ]]; then
+              echo 'KERNEL=="kvm", GROUP="kvm", MODE="0660"' | sudo tee /etc/udev/rules.d/99-zackos-kvm.rules
+              sudo udevadm control --reload-rules
+              sudo udevadm trigger --name-match=kvm
+              sudo udevadm settle
+            fi
             qemu-system-x86_64 --version
           else
             pkg="$RUNNER_TEMP/virtualbox.deb"
@@ -102,7 +112,14 @@ jobs:
           sha256sum -c ZackOS-i3.iso.sha256
           rm ZackOS-i3.iso.part*
           args=("$GITHUB_WORKSPACE/patches/zackos-installer/test-vm-install.py" ZackOS-i3.iso "$PLATFORM" "$VIDEO" "$FIRMWARE" --init "$INIT" --shutdown "$SHUTDOWN" --output "$RUNNER_TEMP/screens")
-          if [[ $PLATFORM == virtualbox ]]; then sudo /usr/bin/python3 -u "${args[@]}"; else /usr/bin/python3 -u "${args[@]}" --accel "$ACCEL"; fi
+          if [[ $PLATFORM == virtualbox ]]; then
+            sudo /usr/bin/python3 -u "${args[@]}"
+          elif [[ $ACCEL == kvm ]]; then
+            if [[ $VIDEO == virtio ]]; then args+=(--move-to-sata); fi
+            sudo -u "$USER" -g kvm /usr/bin/python3 -u "${args[@]}" --accel kvm
+          else
+            /usr/bin/python3 -u "${args[@]}" --accel tcg
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

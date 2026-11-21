@@ -120,7 +120,7 @@ class Qemu:
         opt = self.options
         self.serial.unlink(missing_ok=True)
         self.monitor.unlink(missing_ok=True)
-        machine = "pc" if opt.video == "virtio" else "q35"
+        machine = "pc" if opt.video == "virtio" and (iso or not opt.move_to_sata) else "q35"
         bus = "virtio" if machine == "pc" else "ide"
         args = ["qemu-system-x86_64", "-machine", machine, "-accel", opt.accel, "-cpu", "max",
                 "-smp", "2", "-m", "3072", "-vga", opt.video, "-display", "none",
@@ -280,6 +280,8 @@ def check_vm(vm, opt):
     digest = disk.run("sha256sum /boot/vmlinuz-* | cut -d' ' -f1")
     assert digest == kernel, (digest, kernel)
     print("Matching live and installed kernel SHA-256", digest, flush=True)
+    if opt.move_to_sata:
+        assert disk.run("findmnt -no SOURCE /") == "/dev/sda1"
     print(disk.run("findmnt /; uname -r; id tester; if [ -d /sys/firmware/efi ]; then "
                    "test -s /boot/efi/EFI/BOOT/BOOTX64.EFI; findmnt /boot/efi; fi"))
     disk.wait("ip -4 route show default | grep -q '^default' && test -S /run/zackos-power/control && pgrep -x acpid")
@@ -334,6 +336,7 @@ def main():
     parser.add_argument("--init", choices=("runit", "sysvinit"), default="runit")
     parser.add_argument("--accel", choices=("kvm", "tcg"), default="kvm")
     parser.add_argument("--shutdown", choices=("user", "acpi"), default="user")
+    parser.add_argument("--move-to-sata", action="store_true", help="Install on VirtIO, then boot the disk on SATA")
     parser.add_argument("--output", type=Path, required=True)
     opt = parser.parse_args()
     opt.output.mkdir(parents=True, exist_ok=True)
