@@ -31,13 +31,18 @@ def main():
                       hostname="zackos", username="tester", **options)
     assert started.get("started"), started
     previous = ""
-    for _ in range(900):
-        state = request("status")
+    deadline = time.monotonic() + 900
+    while time.monotonic() < deadline:
+        try:
+            state = request("status")
+        except TimeoutError:
+            # The GTK client also polls again if a busy guest misses a reply.
+            continue
         if state["message"] != previous:
             print(state["message"], flush=True)
             previous = state["message"]
         if state["phase"] == "failed":
-            raise RuntimeError("\n".join(state["log"]))
+            raise RuntimeError("\n".join([*state["log"], state["message"]]))
         if state["phase"] == "done":
             return
         time.sleep(1)

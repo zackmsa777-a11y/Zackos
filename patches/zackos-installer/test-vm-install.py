@@ -149,7 +149,7 @@ class Qemu:
         machine = "pc" if opt.video == "virtio" and (iso or not opt.move_to_sata) else "q35"
         bus = "virtio" if machine == "pc" else "ide"
         args = ["qemu-system-x86_64", "-machine", machine, "-accel", opt.accel, "-cpu", "max",
-                "-smp", "2", "-m", "3072", "-vga", opt.video, "-display", "none",
+                "-smp", "2", "-m", str(getattr(opt, "memory", 3072)), "-vga", opt.video, "-display", "none",
                 "-drive", f"file={self.disk},if={bus},format=qcow2",
                 "-nic", "user,model=" + ("virtio-net-pci" if machine == "pc" else "e1000"),
                 "-serial", f"unix:{self.serial},server=on,wait=on",

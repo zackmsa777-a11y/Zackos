@@ -62,7 +62,13 @@ def check(vm, iso, init, out):
     live = VM["Serial"](vm.serial, "zackos", VM["LIVE_AUTH"])
     live.wait("pgrep -xu live i3 && xdotool search --onlyvisible --name '^Install ZackOS$'")
     live.wait("getent hosts cache.nixos.org")
-    VM["install_as_live"](live, "plasma-x11", init, root_pass, user_pass)
+    try:
+        VM["install_as_live"](live, "plasma-x11", init, root_pass, user_pass)
+    except Exception:
+        vm.screen(out / "installer-display.png")
+        print(live.run("free -m; df -h /mnt/zackos 2>/dev/null || :; "
+                       "dmesg | grep -Ei 'out of memory|oom-kill|killed process|I/O error' | tail -16 || :"), flush=True)
+        raise
     vm.acpi()
     vm.off()
     live.sock.close()
@@ -126,7 +132,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    options = SimpleNamespace(video="virtio", firmware="bios", accel="kvm", move_to_sata=False)
+    options = SimpleNamespace(video="virtio", firmware="bios", accel="kvm", move_to_sata=False, memory=4096)
     with tempfile.TemporaryDirectory(prefix="zackos-plasma-") as directory:
         vm = VM["Qemu"](Path(directory), options)
         try:
